@@ -5,7 +5,8 @@ import { createPanel } from './panel.js';
 import { Effects } from './effects.js';
 import { Gore } from './gore.js';
 import { Grapple } from './grapple.js';
-import { buildStreet, collideCircle, insideCollider, STREET_LENGTH } from './level.js';
+import { buildStreet, collideCircle, insideCollider, heightAt, findLedge, STREET_LENGTH } from './level.js';
+import { Humanoid } from './humanoid.js';
 import { loadParams, ZOMBIE_DEFAULTS, ZOMBIE_KEY, VISIBILITY } from './params.js';
 import './style.css';
 
@@ -49,6 +50,10 @@ ground.receiveShadow = true;
 scene.add(ground);
 
 const level = buildStreet(scene);
+Humanoid.terrain = {
+  heightAt: (x, z, maxY) => heightAt(level, x, z, maxY),
+  findLedge: (pos, dir) => findLedge(level, pos, dir),
+};
 
 // Day is kept around as a debugging view; night is the game.
 function applyEnvironment() {
@@ -194,6 +199,11 @@ let shake = 0;
 player.onShot = (muzzle, dir) => {
   let distance = effects.raycastObstacles(muzzle, dir);
   let kind = distance < Infinity ? 'wall' : null;
+  // Shooting down from a car: the road stops the bullet.
+  if (dir.y < -1e-4 && muzzle.y / -dir.y < distance) {
+    distance = muzzle.y / -dir.y;
+    kind = 'wall';
+  }
   let target = null;
   let headshot = false;
   for (const z of zombies) {
@@ -220,7 +230,7 @@ player.onShot = (muzzle, dir) => {
   shake = Math.min(shake + params.cameraShake, params.cameraShake * 3);
 };
 
-const NO_INPUT = { x: 0, z: 0, walk: false, sprint: false, fire: false, aimPoint: null };
+const NO_INPUT = { x: 0, z: 0, walk: false, sprint: false, fire: false, jump: false, aimPoint: null };
 
 function updateWorld(dt, input) {
   player.update(dt, escaped ? NO_INPUT : input);
@@ -239,13 +249,14 @@ function updateWorld(dt, input) {
     document.getElementById('won').hidden = false;
   }
 
-  // Bodies can't overlap walls, cars or each other.
-  if (player.state !== 'dead') collideCircle(level, player.pos, 0.3);
+  // Bodies can't overlap walls, cars or each other (mid-climb, the path rules).
+  if (player.state !== 'dead' && !player.traversal) collideCircle(level, player.pos, 0.3, player.pos.y);
   for (const z of zombies) {
-    if (z.dead) continue;
-    collideCircle(level, z.pos, 0.3);
-    // Grabbers and feeders are meant to be up close.
-    if (player.state !== 'normal' || z.state === 'grab') continue;
+    if (z.dead || z.traversal) continue;
+    collideCircle(level, z.pos, 0.3, z.pos.y);
+    // Grabbers and feeders are meant to be up close; different heights don't touch.
+    if (player.state !== 'normal' || z.state === 'grab' || player.traversal) continue;
+    if (Math.abs(player.pos.y - z.pos.y) > 0.5) continue;
     const dx = player.pos.x - z.pos.x;
     const dz = player.pos.z - z.pos.z;
     const d = Math.hypot(dx, dz);
@@ -310,6 +321,7 @@ function showToast(text) {
 }
 let warnedAboutCtrl = false;
 let strugglePresses = 0; // Space presses since last frame
+let jumpQueued = false;
 
 window.addEventListener('keydown', (e) => {
   if (e.target instanceof HTMLInputElement) return;
@@ -322,6 +334,7 @@ window.addEventListener('keydown', (e) => {
   }
   if (e.repeat) return;
   if (e.code === 'Space' || e.code === 'KeyE') strugglePresses++;
+  if (e.code === 'Space') jumpQueued = true; // vault/climb when not grabbed
   if (e.code === 'Enter' && (player.state === 'dead' || escaped)) restart();
   if (e.code === 'KeyR') player.startReload();
   if (e.code === 'KeyN') spawnWave();
@@ -433,6 +446,7 @@ const ui = {
   struggleFill: document.getElementById('struggle-fill'),
   biteFill: document.getElementById('bite-fill'),
   objective: document.getElementById('objective'),
+  parkour: document.getElementById('parkour'),
 };
 const timer = new THREE.Timer();
 timer.connect(document);
@@ -449,6 +463,10 @@ function updateUI(real) {
     ui.struggleFill.style.width = `${grapple.struggle * 100}%`;
     ui.biteFill.style.width = `${grapple.biteProgress * 100}%`;
   }
+  const hint = player.state === 'normal' && !player.traversal ? player.parkourHint : null;
+  ui.parkour.hidden = !hint;
+  if (hint) ui.parkour.innerHTML = `<b>SPACE</b> · ${hint.toUpperCase()}`;
+
   const toGoal = Math.max(player.pos.distanceTo(level.goal.pos) - level.goal.radius, 0);
   ui.objective.textContent = escaped ? 'EXTRACTED' : `EXTRACTION ▲ ${Math.round(toGoal)} m`;
 
@@ -466,9 +484,16 @@ function frame(timestamp) {
   const slow = (params.slowMo ? 0.25 : 1) * (deathSlow > 0 ? 0.3 : 1);
   const dt = params.paused ? 0 : real * params.timeScale * slow;
 
-  const input = readInput();
+  // Dev test scripts can set window.__rigorInput to drive the game alone.
+  const input = (import.meta.env.DEV && window.__rigorInput) ? { ...window.__rigorInput } : readInput();
+  // A tap is consumed by the first simulation step only.
+  input.jump = jumpQueued && dt > 0;
+  if (dt > 0) jumpQueued = false;
   const steps = Math.ceil(dt / STEP);
-  for (let i = 0; i < steps; i++) updateWorld(dt / steps, input);
+  for (let i = 0; i < steps; i++) {
+    updateWorld(dt / steps, input);
+    input.jump = false;
+  }
   grapple.update(dt, params.paused ? 0 : strugglePresses);
   strugglePresses = 0;
   effects.update(dt);

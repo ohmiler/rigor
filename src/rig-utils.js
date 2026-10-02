@@ -2,6 +2,8 @@ import * as THREE from 'three';
 
 export const UP = new THREE.Vector3(0, 1, 0);
 export const DEG = Math.PI / 180;
+// Highest ledge you walk up without climbing (car hood to roof is ~0.55 m).
+export const STEP_UP = 0.6;
 
 const _d = new THREE.Vector3();
 const _p = new THREE.Vector3();

@@ -1,8 +1,10 @@
 import * as THREE from 'three';
 import { Humanoid } from './humanoid.js';
-import { DEG, wrapAngle, dampAngle, localPoint, localDir, quatFrom } from './rig-utils.js';
+import { DEG, wrapAngle, dampAngle, damp, localPoint, localDir, quatFrom } from './rig-utils.js';
 
 const _v1 = new THREE.Vector3();
+const _v2 = new THREE.Vector3();
+const _q1 = new THREE.Quaternion();
 
 // Points in gun space: (right, up, forward).
 const GRIP = [0, -0.1, -0.05];
@@ -89,6 +91,8 @@ export class Player extends Humanoid {
     this.fireCooldown = 0;
     this.onShot = null; // (muzzle: Vector3, dir: Vector3) => void
     this.moveMode = 'jog';
+    this.aimPitch = 0;
+    this.parkourHint = null; // 'vault' | 'climb' | null
 
     this.health = params.maxHealth;
     this.state = 'normal'; // 'normal' | 'grabbed' | 'dead'
@@ -125,6 +129,10 @@ export class Player extends Humanoid {
     this.health = this.params.maxHealth;
     this.state = 'normal';
     this.grabbedBy = null;
+    this.traversal = null;
+    this.traversalPose.pitch = this.traversalPose.roll = 0;
+    this.vy = 0;
+    this.aimPitch = 0;
     this._settle();
   }
 
@@ -190,8 +198,35 @@ export class Player extends Humanoid {
     }
     const grabbed = this.state === 'grabbed' && this.grabbedBy;
 
+    // Mid-vault or mid-climb: the path drives the body, no other input.
+    if (this.traversal) {
+      this._updateTraversal(dt);
+      this._updateRecoil(dt);
+      this._updateYaws(dt);
+      this._updateLean(dt);
+      this._updateDrops(dt);
+      this._poseBody(dt);
+      return;
+    }
+
     _v1.set(input.x, 0, input.z);
     if (_v1.lengthSq() > 1) _v1.normalize();
+
+    // Vault/climb toward where you're moving, or where you're facing if still.
+    const canParkour = !grabbed && this.state === 'normal' && !this.reload.active && this.vy === 0;
+    if (_v1.lengthSq() > 0.01) _v2.copy(_v1).normalize();
+    else _v2.set(Math.sin(this.aimYaw), 0, Math.cos(this.aimYaw));
+    const ledge = canParkour ? Humanoid.terrain.findLedge(this.pos, _v2) : null;
+    this.parkourHint = ledge?.type ?? null;
+    if (ledge && input.jump) {
+      const rise = ledge.top - this.pos.y;
+      // Vault one-handed with the gun kept; climb with both hands, gun swung aside.
+      if (ledge.type === 'vault') this.startTraversal(ledge, { duration: 0.62 });
+      else this.startTraversal(ledge, { duration: 0.85 + 0.4 * rise, bothHands: true });
+      this.parkourHint = null;
+      this._poseBody(dt);
+      return;
+    }
     // Ctrl (walk) wins over Shift (sprint) so a careful player is never surprised.
     this.moveMode = input.walk ? 'walk' : input.sprint ? 'sprint' : 'jog';
     const topSpeed = { walk: p.walkSpeed, jog: p.jogSpeed, sprint: p.runSpeed }[this.moveMode];
@@ -206,6 +241,9 @@ export class Player extends Humanoid {
       const dx = input.aimPoint.x - this.pos.x;
       const dz = input.aimPoint.z - this.pos.z;
       if (dx * dx + dz * dz > 0.16) aimTarget = Math.atan2(dx, dz);
+      // From high ground, tip the gun down toward chest height at the cursor.
+      const drop = this.pos.y > 0.3 ? this.pos.y + 0.25 : 0;
+      this.aimPitch = damp(this.aimPitch, Math.atan2(drop, Math.max(Math.hypot(dx, dz), 1)), 10, dt);
     } else if (!p.faceMouse && this.speed > 0.3) {
       aimTarget = Math.atan2(this.vel.x, this.vel.z);
     }
@@ -431,8 +469,15 @@ export class Player extends Humanoid {
     // Recoil: negative pitch raises the muzzle; "back" pulls the gun toward the chest.
     const p = this.params;
     const r = this.recoil;
-    quatFrom(this.gunQuat, this.pitch * 0.15 - r.pitch, this.aimYaw + r.yaw, 0);
+    quatFrom(this.gunQuat, this.pitch * 0.15 - r.pitch + this.aimPitch, this.aimYaw + r.yaw, 0);
     localPoint(this.gunPos, this.chestPos, this.chestQuat, p.gunRight, p.gunUp + r.pitch * 0.05, p.gunFwd - r.back);
+    // Climbing: swing the gun down to hang off the right side, muzzle low.
+    if (this.gunStow > 0) {
+      const s = this.gunStow;
+      localPoint(_v1, this.chestPos, this.chestQuat, 0.25, -0.38, 0.06);
+      this.gunPos.lerp(_v1, s);
+      this.gunQuat.slerp(quatFrom(_q1, 1.25, this.chestYaw + 0.35, 0.2), s);
+    }
     this.gun.position.copy(this.gunPos);
     this.gun.quaternion.copy(this.gunQuat);
     this._updateFlashlight();

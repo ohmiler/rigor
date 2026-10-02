@@ -57,6 +57,8 @@ export function createPanel(params, zparams, player, { onSkeleton, onSpawn, onFu
   grab.add(params, 'breakFreeShove', 0, 8, 0.1).name('Break-free shove');
   grab.add(zparams, 'attackRange', 0.4, 1.5, 0.05).name('Zombie grab range');
   grab.add(zparams, 'grabWindup', 0.05, 1.5, 0.05).name('Zombie lunge time');
+  grab.add(zparams, 'climbDelay', 0.5, 20, 0.5).name('Zombie climb delay');
+  grab.add(zparams, 'climbSlowness', 1, 5, 0.1).name('Zombie climb slowness');
 
   const move = gui.addFolder('Movement').close();
   move.add(params, 'runSpeed', 1, 8, 0.1).name('Sprint speed (Shift)');

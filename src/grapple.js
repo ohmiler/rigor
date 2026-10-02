@@ -32,6 +32,7 @@ export class Grapple {
 
   canGrab() {
     const s = this.player.state;
+    if (this.player.traversal) return false; // mid-vault or mid-climb
     if (s === 'normal') return this.grace <= 0;
     return s === 'grabbed' && this.grabbers.length < MAX_GRABBERS;
   }

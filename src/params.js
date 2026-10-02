@@ -105,6 +105,8 @@ export const ZOMBIE_DEFAULTS = {
   hearingRange: 25,
   attackRange: 0.75,
   grabWindup: 0.35, // lunge time before the grab connects: back off to dodge it
+  climbDelay: 4, // seconds a zombie paws at a car before clambering up after you
+  climbSlowness: 2.2, // how many times slower than the player they climb
   health: 100,
   hitShove: 2.2,
   corpseTime: 30,

@@ -11,7 +11,9 @@ import {
   localDir,
   quatFrom,
   rightOf,
+  STEP_UP,
 } from './rig-utils.js';
+import { Traversal } from './traversal.js';
 
 const { clamp, lerp } = THREE.MathUtils;
 
@@ -36,6 +38,12 @@ export const DIMS = {
  * (`_setHandTargets`).
  */
 export class Humanoid {
+  // The ground everyone walks on. main.js points this at the level.
+  static terrain = {
+    heightAt: () => 0,
+    findLedge: () => null,
+  };
+
   constructor(scene, params, look) {
     this.params = params;
     this.scene = scene;
@@ -59,6 +67,10 @@ export class Humanoid {
     // Constant body attitude on top of the physics (a zombie's hunch, a head tilt).
     this.posture = { pitch: 0, roll: 0, headPitch: 0, headRoll: 0 };
     this.heightOffset = 0; // negative crouches; IK bends the knees to match
+    this.vy = 0; // vertical speed while falling
+    this.traversal = null; // active vault or climb
+    this.traversalPose = { pitch: 0, roll: 0 };
+    this.gunStow = 0; // 0 = aiming, 1 = gun swung down out of the way
 
     this.phase = 0;
     this.duty = params.dutyWalk;
@@ -249,6 +261,85 @@ export class Humanoid {
     this.pos.addScaledVector(this.vel, dt);
     if (dt > 0) this.accel.lerp(_v2.divideScalar(dt), 1 - Math.exp(-10 * dt));
     this.speed = this.vel.length();
+    this._updateVertical(dt);
+  }
+
+  // Walk up small steps, fall off edges.
+  _updateVertical(dt) {
+    const support = Humanoid.terrain.heightAt(this.pos.x, this.pos.z, this.pos.y + STEP_UP);
+    if (support >= this.pos.y) {
+      this.pos.y += (support - this.pos.y) * (1 - Math.exp(-25 * dt));
+      if (support - this.pos.y < 0.005) this.pos.y = support;
+      this.vy = 0;
+    } else {
+      this.vy -= 9.8 * dt;
+      this.pos.y = Math.max(this.pos.y + this.vy * dt, support);
+      if (this.pos.y === support) {
+        // Landing knocks the torso forward a little.
+        if (this.vy < -2.5) this.jolt(_v1.set(Math.sin(this.aimYaw), 0, Math.cos(this.aimYaw)), -this.vy * 0.3);
+        this.vy = 0;
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------- traversal
+
+  /**
+   * Vault over or climb onto a ledge from `findLedge`. Keyframes (see
+   * traversal.js) place the hips, hands and feet relative to the real edge;
+   * IK and the springs do the rest.
+   */
+  startTraversal(ledge, { duration, bothHands = false }) {
+    this.traversal = new Traversal(ledge, this, { duration, bothHands });
+    this.vy = 0;
+    this.reach = 0;
+  }
+
+  _updateTraversal(dt) {
+    const tr = this.traversal;
+    const p = this.params;
+    const prevX = this.pos.x;
+    const prevZ = this.pos.z;
+    tr.evaluate(dt);
+
+    // The keys drive the hips; pos is the feet base under them.
+    this.pos.set(tr.pelvis.x, tr.pelvis.y - p.hipHeight, tr.pelvis.z);
+    if (dt > 0) this.vel.set((this.pos.x - prevX) / dt, 0, (this.pos.z - prevZ) / dt);
+    this.speed = 0; // no run crouch or bob while the keys are in charge
+    this.traversalPose.pitch = tr.pose.pitch;
+    this.traversalPose.roll = tr.pose.roll;
+    this.gunStow = tr.pose.stow;
+    this.aimYaw = dampAngle(this.aimYaw, tr.yaw, 14, dt);
+    this.lowerYaw = wrapAngle(tr.yaw + tr.pose.hipYaw);
+
+    for (const [i, f] of this.feet.entries()) {
+      f.planted = false;
+      f.pos.copy(tr.feet[i]);
+      f.yaw = this.lowerYaw;
+      f.pitch = 0;
+    }
+
+    if (tr.done) {
+      this.pos.copy(tr.end);
+      this.traversal = null;
+      this.traversalPose.pitch = this.traversalPose.roll = 0;
+      this.gunStow = 0;
+      for (const f of this.feet) {
+        this._restTarget(f.pos, f);
+        f.planted = true;
+      }
+      this.vel.copy(tr.dir).multiplyScalar(1.2);
+      this.speed = 1.2;
+    }
+  }
+
+  // Blend the hands onto their holds on the ledge.
+  _traversalHands() {
+    const tr = this.traversal;
+    if (!tr) return;
+    const [l, r] = tr.hands;
+    if (l.w > 0) this.hands.left.target.lerp(l.pos, l.w);
+    if (r.w > 0) this.hands.right.target.lerp(r.pos, r.w);
   }
 
   _updateBody(dt) {
@@ -300,7 +391,7 @@ export class Humanoid {
     rightOf(out, this.lowerYaw).multiplyScalar(foot.side * this.params.footSpread);
     out.x += this.pos.x;
     out.z += this.pos.z;
-    out.y = 0;
+    out.y = Humanoid.terrain.heightAt(out.x, out.z, this.pos.y + STEP_UP);
     return out;
   }
 
@@ -330,12 +421,12 @@ export class Humanoid {
 
     for (const f of this.feet) {
       this._restTarget(f.target, f).addScaledVector(this.vel, lead);
-      f.target.y = 0;
+      f.target.y = Humanoid.terrain.heightAt(f.target.x, f.target.z, this.pos.y + STEP_UP);
       const local = (this.phase + f.offset) % 1;
       if (local < this.duty) {
         if (!f.planted) {
           f.planted = true;
-          f.pos.y = 0;
+          f.pos.y = f.target.y;
           f.pitch = 0;
         }
         f.progress = local / this.duty;
@@ -347,7 +438,7 @@ export class Humanoid {
         const t = (local - this.duty) / (1 - this.duty);
         f.progress = t;
         f.pos.lerpVectors(f.swingStart, f.target, smoothstep(t));
-        f.pos.y = Math.sin(Math.PI * t) * p.stepHeight * f.stepScale * (0.6 + 0.4 * speedF);
+        f.pos.y += Math.sin(Math.PI * t) * p.stepHeight * f.stepScale * (0.6 + 0.4 * speedF);
         f.yaw = dampAngle(f.yaw, this.lowerYaw, 14, dt);
         f.pitch = -0.35 * f.stepScale * Math.sin(Math.PI * t);
       }
@@ -365,16 +456,22 @@ export class Humanoid {
     const p = this.params;
     const pose = this.posture;
     const speedF = clamp(this.speed / p.runSpeed, 0, 1);
-    const pitch = this.pitch + pose.pitch;
-    const roll = this.roll + pose.roll;
+    const pitch = this.pitch + pose.pitch + this.traversalPose.pitch;
+    const roll = this.roll + pose.roll + this.traversalPose.roll;
 
-    const bob = p.bobAmount * speedF * (0.5 + 0.5 * Math.cos(this.phase * Math.PI * 4));
-    this.pelvisPos.set(this.pos.x, p.hipHeight - p.crouch * speedF - bob + this.heightOffset, this.pos.z);
+    const bob = this.traversal ? 0 : p.bobAmount * speedF * (0.5 + 0.5 * Math.cos(this.phase * Math.PI * 4));
+    this.pelvisPos.set(
+      this.pos.x,
+      this.pos.y + p.hipHeight - p.crouch * speedF - bob + this.heightOffset,
+      this.pos.z,
+    );
     quatFrom(this.pelvisQuat, pitch * 0.35, this.pelvisYaw, roll * 0.35);
     quatFrom(this.chestQuat, pitch, this.chestYaw, roll);
     localPoint(_v1, this.pelvisPos, this.pelvisQuat, 0, 0.08, 0);
     this.chestPos.addVectors(_v1, localDir(_v2, this.chestQuat, 0, 0.27, 0));
-    quatFrom(this.headQuat, pitch * 0.3 + pose.headPitch, this.aimYaw, roll * 0.3 + pose.headRoll);
+    // While climbing the head comes up to look ahead instead of following the torso down.
+    const headPitch = pitch * 0.3 + pose.headPitch - this.traversalPose.pitch * 0.9;
+    quatFrom(this.headQuat, headPitch, this.aimYaw, roll * 0.3 + pose.headRoll);
     localPoint(this.headPos, this.chestPos, this.chestQuat, 0, 0.33, 0.02);
     this._afterFrames();
 
@@ -398,6 +495,7 @@ export class Humanoid {
 
     // Hands chase their targets through a spring, so they carry momentum.
     this._setHandTargets(dt);
+    this._traversalHands();
     const damping = 2 * Math.sqrt(p.handStiffness) * p.handDampingRatio;
     for (const h of [this.hands.left, this.hands.right]) {
       if (snap) {

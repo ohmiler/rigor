@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { STEP_UP } from './rig-utils.js';
 
 // "One night, one street": a straight road running north (+Z) from the start
 // to an extraction point, walled in by buildings, cluttered with dead cars.
@@ -35,7 +36,7 @@ const CAR_COLORS = ['#7a2b28', '#2f4a6b', '#c9c6bd', '#3c3e42', '#6b6a3a', '#242
 export function buildStreet(scene) {
   const level = {
     meshes: [], // bullet raycast targets
-    colliders: [], // { x, z, hx, hz, cos, sin }
+    colliders: [], // { x, z, hx, hz, cos, sin, top, climb, vault }
     start: new THREE.Vector3(0, 0, 3),
     goal: { pos: new THREE.Vector3(0, 0, STREET_LENGTH - 6), radius: 2.6 },
     zombieSpawns: [],
@@ -58,8 +59,10 @@ export function buildStreet(scene) {
     mesh.rotation.y = yaw;
     return mesh;
   };
-  const collider = (x, z, hx, hz, yaw = 0) => {
-    level.colliders.push({ x, z, hx, hz, cos: Math.cos(yaw), sin: Math.sin(yaw) });
+  // `top` is the walkable height of the box; `climb` means you can get up on
+  // it, `vault` means you go over it instead.
+  const collider = (x, z, hx, hz, yaw = 0, { top = 10, climb = false, vault = false } = {}) => {
+    level.colliders.push({ x, z, hx, hz, cos: Math.cos(yaw), sin: Math.sin(yaw), top, climb, vault });
   };
 
   // ------------------------------------------------------------ road
@@ -83,7 +86,7 @@ export function buildStreet(scene) {
       const color = pick(BUILDING_COLORS);
       const x = side * (EDGE + depth / 2);
       const building = add(block(mat(color), depth, height, len - 0.3, x, height / 2, z + len / 2), { solid: true });
-      collider(x, z + len / 2, depth / 2, len / 2);
+      collider(x, z + len / 2, depth / 2, len / 2, 0, { top: height });
       // Dark shop windows along the street face.
       const face = side * (EDGE - 0.01);
       for (let wz = z + 1.5; wz < z + len - 1.5; wz += 3) {
@@ -100,9 +103,9 @@ export function buildStreet(scene) {
   }
   // End caps: a wall behind the start and a collapsed overpass past the goal.
   add(block(MATS.concrete, EDGE * 2, 3, 1, 0, 1.5, -1.2), { solid: true });
-  collider(0, -1.2, EDGE, 0.5);
+  collider(0, -1.2, EDGE, 0.5, 0, { top: 3 });
   add(block(MATS.concrete, EDGE * 2, 4, 1.5, 0, 2, STREET_LENGTH + 0.8), { solid: true });
-  collider(0, STREET_LENGTH + 0.8, EDGE, 0.75);
+  collider(0, STREET_LENGTH + 0.8, EDGE, 0.75, 0, { top: 4 });
 
   // ------------------------------------------------------------ cars
   const car = (x, z, yaw, color = pick(CAR_COLORS)) => {
@@ -126,7 +129,9 @@ export function buildStreet(scene) {
     }
     root.add(g);
     level.meshes.push(body, cabin);
-    collider(x, z, 0.95, 2.2, yaw);
+    // Hood/trunk level, and the roof on top of it (offset back like the cabin).
+    collider(x, z, 0.95, 2.2, yaw, { top: 0.95, climb: true });
+    collider(x - 0.2 * Math.sin(yaw), z - 0.2 * Math.cos(yaw), 0.81, 1.1, yaw, { top: 1.5, climb: true });
   };
   // Hand-placed so the street reads as a story: a pile-up, a jam, strays.
   car(-2, 14, 0.15);
@@ -143,7 +148,7 @@ export function buildStreet(scene) {
   // ------------------------------------------------------------ clutter
   const barrier = (x, z, yaw) => {
     add(block(MATS.concrete, 0.6, 0.85, 2.4, x, 0.425, z, yaw), { solid: true });
-    collider(x, z, 0.3, 1.2, yaw);
+    collider(x, z, 0.3, 1.2, yaw, { top: 0.85, climb: true, vault: true });
   };
   barrier(-1.5, 44, 1.5);
   barrier(1.5, 44.4, 1.65);
@@ -153,7 +158,7 @@ export function buildStreet(scene) {
 
   const dumpster = (x, z, yaw) => {
     add(block(MATS.dumpster, 1.1, 1.2, 2, x, 0.74, z, yaw), { solid: true });
-    collider(x, z, 0.55, 1, yaw);
+    collider(x, z, 0.55, 1, yaw, { top: 1.34, climb: true });
   };
   dumpster(-5.2, 26, 0);
   dumpster(5.3, 47, 0.1);
@@ -167,7 +172,7 @@ export function buildStreet(scene) {
       const lz = z + (side > 0 ? 9 : 0);
       add(block(MATS.pole, 0.14, 5, 0.14, x, 2.5 + 0.14, lz));
       add(block(MATS.pole, 1.2, 0.12, 0.25, x - side * 0.55, 5.1, lz));
-      collider(x, lz, 0.12, 0.12);
+      collider(x, lz, 0.12, 0.12, 0, { top: 5 });
       if (Math.random() < 0.55) {
         const light = new THREE.PointLight('#ffb866', 0, 11, 1.4);
         light.position.set(x - side * 1.0, 4.9, lz);
@@ -218,9 +223,79 @@ export function buildStreet(scene) {
   return level;
 }
 
-// Push a circle at `pos` (x, z) out of every oriented box.
-export function collideCircle(level, pos, radius) {
+// World point -> box space (three.js Y rotation).
+function toLocal(c, x, z) {
+  const dx = x - c.x;
+  const dz = z - c.z;
+  return [dx * c.cos - dz * c.sin, dx * c.sin + dz * c.cos];
+}
+
+function contains(c, x, z, margin = 0) {
+  const [lx, lz] = toLocal(c, x, z);
+  return Math.abs(lx) <= c.hx + margin && Math.abs(lz) <= c.hz + margin;
+}
+
+// Height of the walkable surface under (x, z), ignoring anything taller than
+// `maxY` (a wall you're beside isn't a floor you're on).
+export function heightAt(level, x, z, maxY = Infinity) {
+  let h = 0;
   for (const c of level.colliders) {
+    if (c.top > h && c.top <= maxY && contains(c, x, z)) h = c.top;
+  }
+  return h;
+}
+
+/**
+ * Something to vault or climb directly ahead of `pos` along ground direction
+ * `dir`. Returns { type: 'vault' | 'climb', top, edge, end, dir } or null.
+ * `edge` is where the hands go (on the top surface at the near edge) and
+ * `end` is where the feet finish.
+ */
+export function findLedge(level, pos, dir) {
+  const feet = pos.y;
+  for (const reach of [0.35, 0.55, 0.8]) {
+    const px = pos.x + dir.x * reach;
+    const pz = pos.z + dir.z * reach;
+    for (const c of level.colliders) {
+      const rise = c.top - feet;
+      if (!c.climb || rise < 0.35 || rise > 1.6 || !contains(c, px, pz)) continue;
+      // Ignore boxes we're already standing on top of.
+      if (heightAt(level, px, pz, feet + STEP_UP) > feet + 0.05) continue;
+
+      // Walk back to the exact near edge so hands land on the lip, not inside.
+      let near = 0;
+      while (near < reach && !contains(c, pos.x + dir.x * near, pos.z + dir.z * near)) near += 0.03;
+      const ex0 = pos.x + dir.x * near;
+      const ez0 = pos.z + dir.z * near;
+      const edge = new THREE.Vector3(ex0, c.top, ez0);
+
+      // How thick is it along our direction? Thin and low means go over.
+      let through = 0;
+      while (through < 3 && contains(c, ex0 + dir.x * (through + 0.03), ez0 + dir.z * (through + 0.03))) through += 0.05;
+      if (c.vault && through <= 1.2 && rise <= 1.1) {
+        const ex = ex0 + dir.x * (through + 0.55);
+        const ez = ez0 + dir.z * (through + 0.55);
+        const landY = heightAt(level, ex, ez, feet + STEP_UP);
+        const blocked = level.colliders.some((o) => o.top > landY + STEP_UP && contains(o, ex, ez, 0.3));
+        if (!blocked) {
+          return { type: 'vault', top: c.top, edge, through, end: new THREE.Vector3(ex, landY, ez), dir: dir.clone() };
+        }
+      }
+      // Otherwise climb up and stand on it, a little in from the edge.
+      const step = Math.min(0.5, Math.max(through - 0.15, 0.15));
+      const end = new THREE.Vector3(ex0 + dir.x * step, 0, ez0 + dir.z * step);
+      end.y = heightAt(level, end.x, end.z, c.top + 0.01);
+      return { type: 'climb', top: c.top, edge, through, end, dir: dir.clone() };
+    }
+  }
+  return null;
+}
+
+// Push a circle at `pos` (x, z) out of every box taller than a step from
+// `feetY`. Things below that height are floor, not walls.
+export function collideCircle(level, pos, radius, feetY = 0) {
+  for (const c of level.colliders) {
+    if (c.top <= feetY + STEP_UP) continue;
     const dx = pos.x - c.x;
     const dz = pos.z - c.z;
     // World -> box space (three.js Y rotation).

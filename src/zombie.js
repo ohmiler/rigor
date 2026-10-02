@@ -46,6 +46,7 @@ export class Zombie extends Humanoid {
       headTilt: rand(-0.35, 0.35),
       seed: Math.random() * 100,
       armLift: [rand(0.7, 1.15), rand(0.7, 1.15)],
+      climbDelay: rand(0.6, 1.6),
     };
 
     this.pos.copy(position);
@@ -87,6 +88,14 @@ export class Zombie extends Humanoid {
     this.time += dt;
     this.player = world.player;
 
+    if (this.traversal) {
+      this._updateTraversal(dt);
+      this._updateYaws(dt);
+      this._updateLean(dt);
+      this._poseBody(dt);
+      return;
+    }
+
     const player = world.player;
     const grapple = world.grapple;
     this.grabCooldown = Math.max((this.grabCooldown ?? 0) - dt, 0);
@@ -102,11 +111,29 @@ export class Zombie extends Humanoid {
     _desired.set(0, 0, 0);
     let faceYaw = this.aimYaw;
     let crouch = 0;
+    const level = Math.abs(player.pos.y - this.pos.y) < 0.4; // same height as the player
     if (this.state === 'chase') {
       faceYaw = Math.atan2(_v1.x, _v1.z);
       if (dist > p.attackRange) _desired.copy(_v1).setLength(p.chaseSpeed * this.quirk.speed);
+
+      // Player is up on something: crowd below, and eventually clamber up after them.
+      this.climbTimer = this.climbTimer ?? 0;
+      if (player.pos.y > this.pos.y + 0.4 && dist < 2.4) {
+        this.climbTimer += dt;
+        if (this.climbTimer > p.climbDelay * this.quirk.climbDelay) {
+          const ledge = Humanoid.terrain.findLedge(this.pos, _v2.copy(_v1).normalize());
+          if (ledge?.type === 'climb') {
+            const rise = ledge.top - this.pos.y;
+            this.startTraversal(ledge, { duration: (0.85 + 0.4 * rise) * p.climbSlowness, bothHands: true });
+          }
+          this.climbTimer = 0;
+        }
+      } else {
+        this.climbTimer = Math.max(this.climbTimer - dt, 0);
+      }
+
       // Close enough: wind up a lunge.
-      if (dist < p.attackRange + 0.2 && this.stagger <= 0 && this.grabCooldown <= 0 && grapple.canGrab()) {
+      if (level && dist < p.attackRange + 0.2 && this.stagger <= 0 && this.grabCooldown <= 0 && grapple.canGrab()) {
         this.state = 'lunge';
         this.lungeT = 0;
         this.jolt(_v2.copy(_v1).normalize(), 2.5);
@@ -117,7 +144,7 @@ export class Zombie extends Humanoid {
       this.lungeT += dt;
       if (this.lungeT >= p.grabWindup) {
         // Only connects if you're still in reach when the lunge lands.
-        if (!(dist < p.attackRange + 0.35 && grapple.grab(this))) {
+        if (!(level && dist < p.attackRange + 0.35 && grapple.grab(this))) {
           this.state = 'chase';
           this.grabCooldown = 1;
         }
@@ -234,7 +261,7 @@ export class Zombie extends Humanoid {
     if (disc < 0) return null;
     const t = (-b - Math.sqrt(disc)) / (2 * a);
     if (t < 0) return null;
-    const y = origin.y + dir.y * t;
+    const y = origin.y + dir.y * t - this.pos.y; // height up the body
     if (y < 0 || y > HIT_HEIGHT) return null;
     return { distance: t, headshot: y > HEAD_HEIGHT };
   }
@@ -282,9 +309,9 @@ export class Zombie extends Humanoid {
     const fall = t * t;
     const bounce = this.deathT > 0.75 ? Math.sin((this.deathT - 0.75) * 18) * Math.exp(-(this.deathT - 0.75) * 9) * 0.08 : 0;
     const angle = (86 * fall) * DEG - bounce;
-    _m1.makeTranslation(-this.pivot.x, 0, -this.pivot.z);
+    _m1.makeTranslation(-this.pivot.x, -this.pivot.y, -this.pivot.z);
     _m2.makeRotationAxis(this.fallAxis, angle);
-    this.body.matrix.makeTranslation(this.pivot.x, 0, this.pivot.z).multiply(_m2).multiply(_m1);
+    this.body.matrix.makeTranslation(this.pivot.x, this.pivot.y, this.pivot.z).multiply(_m2).multiply(_m1);
     this.body.matrixWorldNeedsUpdate = true;
     if (this.deathT > this.params.corpseTime) {
       this.dispose();
