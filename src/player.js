@@ -21,6 +21,49 @@ const RELOAD_STEPS = [
   { name: 'Restore the support grip', frame: 'gun', p: SUPPORT },
 ];
 
+// Unit cone, apex at the origin, opening along +Z to radius 1 at z = 1.
+const BEAM_GEOMETRY = new THREE.ConeGeometry(1, 1, 40, 1, true)
+  .translate(0, -0.5, 0)
+  .rotateX(-Math.PI / 2);
+
+// Fake volumetric beam: brightest along the axis and near the lens,
+// fading out toward the cone's silhouette and its far end.
+const BEAM_MATERIAL = new THREE.ShaderMaterial({
+  uniforms: {
+    opacity: { value: 0.1 },
+    color: { value: new THREE.Color('#fff1d6') },
+  },
+  vertexShader: /* glsl */ `
+    varying float vAlong;
+    varying vec3 vNormal;
+    varying vec3 vView;
+    void main() {
+      vAlong = position.z;
+      vec4 mv = modelViewMatrix * vec4(position, 1.0);
+      vNormal = normalize(normalMatrix * normal);
+      vView = normalize(-mv.xyz);
+      gl_Position = projectionMatrix * mv;
+    }
+  `,
+  fragmentShader: /* glsl */ `
+    uniform float opacity;
+    uniform vec3 color;
+    varying float vAlong;
+    varying vec3 vNormal;
+    varying vec3 vView;
+    void main() {
+      float edge = pow(abs(dot(normalize(vNormal), normalize(vView))), 2.0);
+      float fade = pow(clamp(1.0 - vAlong, 0.0, 1.0), 1.8);
+      float a = opacity * edge * fade;
+      gl_FragColor = vec4(color * a, a);
+    }
+  `,
+  transparent: true,
+  depthWrite: false,
+  blending: THREE.AdditiveBlending,
+  side: THREE.DoubleSide,
+});
+
 const PLAYER_LOOK = {
   skin: '#e0ac86',
   shirt: '#3f86d4',
@@ -97,6 +140,33 @@ export class Player extends Humanoid {
     barrel.castShadow = true;
     this.gun.add(barrel);
     this.body.add(this.gun);
+
+    // Flashlight under the barrel. Parented to the gun so the beam follows
+    // the aim and every bit of recoil.
+    const torch = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.12, 10), m.gunAccent);
+    torch.rotation.x = Math.PI / 2;
+    torch.position.set(0, -0.045, 0.36);
+    this.gun.add(torch);
+    this.lens = new THREE.Mesh(
+      new THREE.CircleGeometry(0.018, 12),
+      new THREE.MeshBasicMaterial({ color: '#fff6dc' }),
+    );
+    this.lens.position.set(0, -0.045, 0.421);
+    this.gun.add(this.lens);
+
+    this.flashlight = new THREE.SpotLight('#fff1d6', 0, 24, 0.37, 0.55, 1.3);
+    this.flashlight.position.set(0, -0.045, 0.43);
+    this.flashlight.target.position.set(0, -0.045, 6);
+    this.flashlight.castShadow = true;
+    this.flashlight.shadow.mapSize.set(1024, 1024);
+    this.flashlight.shadow.camera.near = 0.2;
+    this.flashlight.shadow.bias = -0.0004;
+    this.flashlight.shadow.normalBias = 0.02;
+    this.gun.add(this.flashlight, this.flashlight.target);
+
+    this.beam = new THREE.Mesh(BEAM_GEOMETRY, BEAM_MATERIAL);
+    this.beam.position.copy(this.flashlight.position);
+    this.gun.add(this.beam);
 
     this.mag = box(this.body, m.mag, 0.04, 0.16, 0.07);
     this.casingGeo = new THREE.CylinderGeometry(0.006, 0.006, 0.03, 6).rotateX(Math.PI / 2);
@@ -358,6 +428,28 @@ export class Player extends Humanoid {
     localPoint(this.gunPos, this.chestPos, this.chestQuat, p.gunRight, p.gunUp + r.pitch * 0.05, p.gunFwd - r.back);
     this.gun.position.copy(this.gunPos);
     this.gun.quaternion.copy(this.gunQuat);
+    this._updateFlashlight();
+  }
+
+  _updateFlashlight() {
+    const p = this.params;
+    const on = p.flashlightOn;
+    const angle = p.flashAngle * DEG;
+    // Intensity 0 rather than visible = false: toggling lights recompiles shaders.
+    this.flashlight.intensity = on ? p.flashIntensity : 0;
+    this.flashlight.angle = angle;
+    this.flashlight.distance = p.flashRange;
+    this.flashlight.shadow.camera.far = p.flashRange;
+    this.lens.material.color.set(on ? '#fff6dc' : '#3a3d44');
+    this.beam.visible = on && p.beamOpacity > 0;
+    BEAM_MATERIAL.uniforms.opacity.value = p.beamOpacity;
+    const length = p.flashRange * 0.55;
+    const radius = Math.tan(angle) * length;
+    this.beam.scale.set(radius, radius, length);
+  }
+
+  toggleFlashlight() {
+    this.params.flashlightOn = !this.params.flashlightOn;
   }
 
   _setHandTargets() {

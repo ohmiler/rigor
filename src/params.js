@@ -69,6 +69,20 @@ export const DEFAULTS = {
   bulletDamage: 34,
   headshotMultiplier: 3,
 
+  // Night
+  night: true,
+  ambientLight: 0.06, // overall sky light at night
+  moonLight: 0.35,
+  nearGlow: 1.6, // faint light around the player so you can see your footing
+  fogRange: 13, // metres past the player before the fog swallows everything
+
+  // Flashlight (mounted under the barrel)
+  flashlightOn: true,
+  flashIntensity: 70,
+  flashAngle: 21, // degrees, half-angle of the cone
+  flashRange: 24,
+  beamOpacity: 0.09, // visible beam in the fog
+
   // Grab & struggle
   maxHealth: 100,
   struggleGain: 0.11, // meter per Space press (split across grabbers)

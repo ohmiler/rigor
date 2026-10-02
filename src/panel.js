@@ -1,7 +1,7 @@
 import GUI from 'lil-gui';
 import { DEFAULTS, ZOMBIE_DEFAULTS, ZOMBIE_KEY, saveParams, resetParams, pickKnown } from './params.js';
 
-export function createPanel(params, zparams, player, { onSkeleton, onSpawn, onFullscreen }) {
+export function createPanel(params, zparams, player, { onSkeleton, onSpawn, onFullscreen, onEnvironment }) {
   const gui = new GUI({ title: 'Levers' });
   const refresh = () => gui.controllersRecursive().forEach((c) => c.updateDisplay());
 
@@ -16,6 +16,18 @@ export function createPanel(params, zparams, player, { onSkeleton, onSpawn, onFu
   actions.add({ spawn: onSpawn }, 'spawn').name('Spawn zombies (N)');
   actions.add({ reload: () => player.startReload() }, 'reload').name('Reload (R)');
   actions.add(player.reload, 'label').name('Stage').listen().disable();
+
+  const night = gui.addFolder('Night & flashlight').close();
+  night.add(params, 'night').name('Night').onChange(onEnvironment);
+  night.add(params, 'ambientLight', 0, 1, 0.01).name('Sky light').onChange(onEnvironment);
+  night.add(params, 'moonLight', 0, 2, 0.05).name('Moonlight').onChange(onEnvironment);
+  night.add(params, 'nearGlow', 0, 3, 0.05).name('Glow around you').onChange(onEnvironment);
+  night.add(params, 'fogRange', 3, 40, 0.5).name('Fog distance');
+  night.add(params, 'flashlightOn').name('Flashlight (F)').listen();
+  night.add(params, 'flashIntensity', 0, 300, 5).name('Flashlight power');
+  night.add(params, 'flashAngle', 5, 50, 1).name('Beam angle °');
+  night.add(params, 'flashRange', 5, 50, 1).name('Beam range');
+  night.add(params, 'beamOpacity', 0, 0.4, 0.01).name('Beam in fog');
 
   const zombies = gui.addFolder('Zombies').close();
   zombies.add(zparams, 'count', 1, 40, 1).name('Count per spawn');
@@ -50,7 +62,7 @@ export function createPanel(params, zparams, player, { onSkeleton, onSpawn, onFu
   move.add(params, 'walkSpeed', 0.3, 4, 0.1).name('Walk speed (Ctrl)');
   move.add(params, 'acceleration', 2, 40, 0.5).name('Acceleration');
   move.add(params, 'aimTurnRate', 2, 40, 0.5).name('Aim turn rate');
-  move.add(params, 'faceMouse').name('Face mouse (F)').listen();
+  move.add(params, 'faceMouse').name('Face mouse').listen();
 
   const waist = gui.addFolder('Waist & spine').close();
   waist.add(params, 'maxHipOffset', 0, 90, 1).name('Max legs↔aim °');
@@ -146,6 +158,7 @@ export function createPanel(params, zparams, player, { onSkeleton, onSpawn, onFu
             Object.assign(params, pickKnown(data.player ?? data, DEFAULTS));
             if (data.zombie) Object.assign(zparams, pickKnown(data.zombie, ZOMBIE_DEFAULTS));
             onSkeleton(params.showSkeleton);
+          onEnvironment();
             refresh();
             flash('Pasted');
           } catch {
@@ -163,6 +176,7 @@ export function createPanel(params, zparams, player, { onSkeleton, onSpawn, onFu
           resetParams(params, DEFAULTS);
           resetParams(zparams, ZOMBIE_DEFAULTS);
           onSkeleton(params.showSkeleton);
+          onEnvironment();
           refresh();
           flash('Reset to defaults');
         },

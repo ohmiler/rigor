@@ -16,6 +16,7 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
 document.body.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
@@ -24,7 +25,12 @@ scene.fog = new THREE.Fog('#4b566c', 25, 60);
 
 const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 200);
 
-scene.add(new THREE.HemisphereLight('#c9d6ff', '#3a4150', 1.3));
+const sky = new THREE.HemisphereLight('#c9d6ff', '#3a4150', 1.3);
+scene.add(sky);
+// Faint light that follows the player: enough to see your footing, not enough
+// to see what's coming.
+const nearGlow = new THREE.PointLight('#9fb2d8', 0, 6, 1.2);
+scene.add(nearGlow);
 const sun = new THREE.DirectionalLight('#ffffff', 2.2);
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
@@ -45,6 +51,21 @@ grid.position.y = 0.002;
 grid.material.transparent = true;
 grid.material.opacity = 0.35;
 scene.add(grid);
+
+// Day is kept around as a debugging view; night is the game.
+function applyEnvironment() {
+  const night = params.night;
+  scene.background.set(night ? '#04060a' : '#4b566c');
+  scene.fog.color.copy(scene.background);
+  sky.intensity = night ? params.ambientLight : 1.3;
+  sky.color.set(night ? '#6d7fa8' : '#c9d6ff');
+  sky.groundColor.set(night ? '#0b0d12' : '#3a4150');
+  sun.intensity = night ? params.moonLight : 2.2;
+  sun.color.set(night ? '#8fa6d6' : '#ffffff');
+  nearGlow.intensity = night ? params.nearGlow : 0;
+  grid.visible = !night;
+}
+applyEnvironment();
 
 // Crates: cover, scale reference, and something to collide with.
 const crateMat = new THREE.MeshStandardMaterial({ color: '#8a7656', roughness: 0.9 });
@@ -150,6 +171,7 @@ createPanel(params, zparams, player, {
   onSkeleton: setSkeleton,
   onSpawn: spawnZombies,
   onFullscreen: () => enterFullscreen(),
+  onEnvironment: applyEnvironment,
 });
 
 // A shot hits whichever is nearest along the ray: a crate or a zombie.
@@ -276,7 +298,7 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'KeyN') spawnZombies();
   if (e.code === 'KeyT') params.slowMo = !params.slowMo;
   if (e.code === 'KeyP') params.paused = !params.paused;
-  if (e.code === 'KeyF') params.faceMouse = !params.faceMouse;
+  if (e.code === 'KeyF') player.toggleFlashlight();
   if (e.code === 'KeyB') setSkeleton(!params.showSkeleton);
 });
 window.addEventListener('keyup', (e) => keys.delete(e.code));
@@ -349,6 +371,11 @@ function updateCamera(dt, snap = false) {
   camZoom += (zoomGoal - camZoom) * (1 - Math.exp(-4 * dt));
   const dist = camDist * camZoom;
   camPos.set(camTarget.x, camTarget.y + dist * 0.82, camTarget.z - dist * 0.57);
+  // Fog is measured from the camera, so it has to start at the player's
+  // distance or the player would be fogged too.
+  scene.fog.near = params.night ? dist * 0.92 : dist + 12;
+  scene.fog.far = params.night ? dist + params.fogRange : dist + 50;
+  nearGlow.position.set(camTarget.x, 1.8, camTarget.z);
   camera.position.lerp(camPos, k);
   camera.lookAt(camTarget);
   if (shake > 0) {
