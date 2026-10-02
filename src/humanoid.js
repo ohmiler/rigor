@@ -12,6 +12,7 @@ import {
   quatFrom,
   rightOf,
   STEP_UP,
+  UP,
 } from './rig-utils.js';
 import { Traversal } from './traversal.js';
 
@@ -20,6 +21,14 @@ const { clamp, lerp } = THREE.MathUtils;
 const _v1 = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
 const _v3 = new THREE.Vector3();
+const _q1 = new THREE.Quaternion();
+const _k1 = new THREE.Vector3();
+const _k2 = new THREE.Vector3();
+const _k3 = new THREE.Vector3();
+const Z_AXIS = new THREE.Vector3(0, 0, 1);
+// Knee swing angles tried when a knee would end up inside an obstacle. Kept
+// within what a hip can actually rotate: a knee never turns to face backwards.
+const KNEE_TURNS = Array.from({ length: 11 }, (_, i) => ((i - 5) * 15 * Math.PI) / 180);
 
 export const DIMS = {
   thigh: 0.46,
@@ -71,6 +80,7 @@ export class Humanoid {
     this.traversal = null; // active vault or climb
     this.traversalPose = { pitch: 0, roll: 0 };
     this.gunStow = 0; // 0 = aiming, 1 = gun swung down out of the way
+    this.handPlant = [0, 0]; // how flat each hand lies on a ledge
 
     this.phase = 0;
     this.duty = params.dutyWalk;
@@ -93,6 +103,7 @@ export class Humanoid {
       target: new THREE.Vector3(),
       yaw: 0,
       pitch: 0,
+      heel: 0, // heel lift (radians), toes stay down
     }));
 
     const hand = () => ({
@@ -154,8 +165,6 @@ export class Humanoid {
 
     this.chest = new THREE.Group();
     box(this.chest, m.shirt, 0.38, 0.34, 0.22);
-    sphere(this.chest, m.shirt, 0.065, DIMS.shoulderX, 0.12, 0);
-    sphere(this.chest, m.shirt, 0.065, -DIMS.shoulderX, 0.12, 0);
     body.add(this.chest);
 
     // Unit-height box stretched between pelvis and chest each frame.
@@ -176,21 +185,39 @@ export class Humanoid {
     }
     body.add(this.head);
 
-    this.arms = [-1, 1].map((side) => ({
-      side,
-      shoulder: new THREE.Vector3(),
-      elbow: new THREE.Vector3(),
-      wrist: new THREE.Vector3(),
-      upper: new Segment(body, m.shirt, DIMS.upperArm, 0.05),
-      fore: new Segment(body, m.skin, DIMS.forearm, 0.04),
-      hand: sphere(body, m.skin, 0.045),
-    }));
+    this.arms = [-1, 1].map((side) => {
+      // A flat hand (palm + fingers) so it can lie on a ledge or wrap a grip.
+      const hand = new THREE.Group();
+      box(hand, m.skin, 0.075, 0.03, 0.07, 0, 0, 0.035);
+      box(hand, m.skin, 0.07, 0.024, 0.05, 0, -0.004, 0.09);
+      box(hand, m.skin, 0.022, 0.024, 0.045, side * 0.04, -0.01, 0.03).rotation.y = side * 0.5; // thumb
+      body.add(hand);
+      return {
+        side,
+        shoulderBase: new THREE.Vector3(),
+        shoulder: new THREE.Vector3(),
+        elbow: new THREE.Vector3(),
+        wrist: new THREE.Vector3(),
+        // The shoulder ball rides on the clavicle, so it moves with the reach.
+        shoulderMesh: sphere(body, m.shirt, 0.065),
+        upper: new Segment(body, m.shirt, DIMS.upperArm, 0.05),
+        fore: new Segment(body, m.skin, DIMS.forearm, 0.04),
+        hand,
+      };
+    });
 
     this.legs = [-1, 1].map((side) => {
+      // Heel block plus a toe block hinged at the ball, so the heel can lift
+      // while the toes stay on the ground.
       const foot = new THREE.Group();
-      box(foot, m.shoes, 0.1, 0.07, 0.25);
+      box(foot, m.shoes, 0.1, 0.07, 0.17);
+      const toe = new THREE.Group();
+      toe.position.set(0, -0.01, 0.085);
+      box(toe, m.shoes, 0.095, 0.05, 0.09, 0, 0, 0.045);
+      foot.add(toe);
       body.add(foot);
       return {
+        toe,
         side,
         hip: new THREE.Vector3(),
         knee: new THREE.Vector3(),
@@ -316,7 +343,9 @@ export class Humanoid {
       f.planted = false;
       f.pos.copy(tr.feet[i]);
       f.yaw = this.lowerYaw;
-      f.pitch = 0;
+      f.heel = 0;
+      // A foot off the ground hangs toes-down.
+      f.pitch = Math.min(tr.footAir[i] / 0.15, 1) * 0.55;
     }
 
     if (tr.done) {
@@ -336,6 +365,8 @@ export class Humanoid {
   // Blend the hands onto their holds on the ledge.
   _traversalHands() {
     const tr = this.traversal;
+    this.handPlant[0] = tr ? tr.hands[0].w : 0;
+    this.handPlant[1] = tr ? tr.hands[1].w : 0;
     if (!tr) return;
     const [l, r] = tr.hands;
     if (l.w > 0) this.hands.left.target.lerp(l.pos, l.w);
@@ -430,7 +461,10 @@ export class Humanoid {
           f.pitch = 0;
         }
         f.progress = local / this.duty;
+        // Late in the stance the heel peels up before the foot leaves the ground.
+        f.heel = this.speed > 0.4 ? smoothstep(clamp((f.progress - 0.55) / 0.45, 0, 1)) * (0.25 + 0.3 * speedF) : 0;
       } else {
+        f.heel = 0;
         if (f.planted) {
           f.planted = false;
           f.swingStart.copy(f.pos);
@@ -446,6 +480,39 @@ export class Humanoid {
   }
 
   // ---------------------------------------------------------------- pose
+
+  /**
+   * Obstacle-aware knee: if the leg as solved would put the knee (or the
+   * thigh/shin) inside something, swing the knee around the hip-ankle line
+   * until it's clear. The foot and hip don't move; only the way the leg bends.
+   * Prefers the normal direction, and stays close to last frame's choice so
+   * the knee doesn't flick back and forth.
+   */
+  _clearKnee(leg, pole, dt) {
+    const solid = Humanoid.terrain.solidAt;
+    const axis = _k1.subVectors(leg.ankleTarget, leg.hip).normalize();
+    const blocked = () =>
+      solid(leg.knee) || solid(_k2.lerpVectors(leg.knee, leg.ankle, 0.5)) || solid(_k2.lerpVectors(leg.hip, leg.knee, 0.5));
+    const solve = (angle) => {
+      _k3.copy(pole).applyAxisAngle(axis, angle);
+      solveTwoBone(leg.hip, leg.ankleTarget, DIMS.thigh, DIMS.shin, _k3, leg.knee, leg.ankle);
+    };
+    const prev = leg.kneeTurn ?? 0;
+    let best = prev;
+    let bestScore = Infinity;
+    for (const angle of KNEE_TURNS) {
+      solve(angle);
+      if (blocked()) continue;
+      const score = Math.abs(angle) + 0.6 * Math.abs(angle - prev);
+      if (score < bestScore) {
+        bestScore = score;
+        best = angle;
+      }
+    }
+    // In play, turn toward it quickly but not instantly; a frozen frame snaps.
+    leg.kneeTurn = dt > 0 ? prev + clamp(best - prev, -7 * dt, 7 * dt) : best;
+    solve(leg.kneeTurn);
+  }
 
   // Subclass hooks.
   _afterFrames() {}
@@ -465,10 +532,16 @@ export class Humanoid {
       this.pos.y + p.hipHeight - p.crouch * speedF - bob + this.heightOffset,
       this.pos.z,
     );
-    quatFrom(this.pelvisQuat, pitch * 0.35, this.pelvisYaw, roll * 0.35);
+    // Walking hips swing forward with each leg and drop a little on the swing side.
+    const gaitSway = this.traversal ? 0 : speedF * Math.sin(this.phase * Math.PI * 2);
+    quatFrom(this.pelvisQuat, pitch * 0.35, this.pelvisYaw + gaitSway * 0.12, roll * 0.35 + gaitSway * 0.05);
     quatFrom(this.chestQuat, pitch, this.chestYaw, roll);
+    // Three-part spine: the lower back takes half the bend, so the torso
+    // curves instead of tipping over as one plank.
+    _q1.slerpQuaternions(this.pelvisQuat, this.chestQuat, 0.5);
     localPoint(_v1, this.pelvisPos, this.pelvisQuat, 0, 0.08, 0);
-    this.chestPos.addVectors(_v1, localDir(_v2, this.chestQuat, 0, 0.27, 0));
+    _v1.add(localDir(_v2, _q1, 0, 0.13, 0));
+    this.chestPos.addVectors(_v1, localDir(_v2, this.chestQuat, 0, 0.15, 0));
     // While climbing the head comes up to look ahead instead of following the torso down.
     const headPitch = pitch * 0.3 + pose.headPitch - this.traversalPose.pitch * 0.9;
     quatFrom(this.headQuat, headPitch, this.aimYaw, roll * 0.3 + pose.headRoll);
@@ -513,13 +586,36 @@ export class Humanoid {
     }
 
     // Arms: two-bone IK from shoulder to the spring-driven hand.
-    for (const arm of this.arms) {
+    for (const [i, arm] of this.arms.entries()) {
       const hand = arm.side < 0 ? this.hands.left : this.hands.right;
-      localPoint(arm.shoulder, this.chestPos, this.chestQuat, arm.side * DIMS.shoulderX, 0.12, p.roundShoulders);
-      localDir(_v3, this.chestQuat, arm.side * 0.6, -1, -0.35);
+      localPoint(arm.shoulderBase, this.chestPos, this.chestQuat, arm.side * DIMS.shoulderX, 0.12, p.roundShoulders);
+      // Clavicle: a nearly straight arm drags the shoulder toward the hand,
+      // and reaching overhead shrugs it up.
+      _v1.subVectors(hand.pos, arm.shoulderBase);
+      const dist = _v1.length();
+      const reach = clamp((dist - 0.42) / 0.18, 0, 1);
+      const shrug = clamp((hand.pos.y - arm.shoulderBase.y) / 0.4, 0, 1);
+      arm.shoulder.copy(arm.shoulderBase).addScaledVector(_v1.divideScalar(dist || 1), 0.055 * reach);
+      arm.shoulder.y += 0.04 * shrug;
+      arm.shoulderMesh.position.copy(arm.shoulder);
+
+      // Elbows hang down and out; with a hand planted on a ledge they flare
+      // out and back instead of jabbing forward into the wall.
+      const plant = this.handPlant[i];
+      localDir(_v3, this.chestQuat, arm.side * (0.6 + 0.5 * plant), -1 + 0.6 * plant, -0.35 - 0.3 * plant);
       solveTwoBone(arm.shoulder, hand.pos, DIMS.upperArm, DIMS.forearm, _v3, arm.elbow, arm.wrist);
       arm.upper.place(arm.shoulder, arm.elbow);
       arm.fore.place(arm.elbow, arm.wrist);
+
+      // Hand follows the forearm, or lies flat (palm down) when planted on a ledge.
+      _v1.subVectors(arm.wrist, arm.elbow).normalize();
+      arm.hand.quaternion.setFromUnitVectors(Z_AXIS, _v1);
+      if (plant > 0) {
+        _v2.set(_v1.x, 0, _v1.z);
+        if (_v2.lengthSq() < 1e-4) _v2.set(Math.sin(this.aimYaw), 0, Math.cos(this.aimYaw));
+        _q1.setFromUnitVectors(Z_AXIS, _v2.normalize());
+        arm.hand.quaternion.slerp(_q1, plant);
+      }
       arm.hand.position.copy(arm.wrist);
     }
 
@@ -530,15 +626,29 @@ export class Humanoid {
       const f = this.feet[i];
       localPoint(leg.hip, this.pelvisPos, this.pelvisQuat, f.side * DIMS.hipX, -0.06, 0);
       leg.ankleTarget.copy(f.pos);
-      leg.ankleTarget.y += DIMS.ankle;
+      // Heel lift pivots on the ball of the foot, raising the ankle.
+      leg.ankleTarget.y += DIMS.ankle + Math.sin(f.heel) * 0.12;
       _v3.set(Math.sin(this.lowerYaw), 0, Math.cos(this.lowerYaw)).addScaledVector(right3, f.side * 0.15);
+      // Climbing and vaulting the legs go everywhere, so treat the knee as the
+      // hinge it is: it bends around the hips' left-right axis. Bend direction =
+      // hip axis × leg line: forward for a hanging leg, up for a leg raised in
+      // front, down-forward for a leg trailing behind. That changes smoothly
+      // with the leg, so the knee can't flip sides the way a fixed "point the
+      // knee this way" hint does whenever the leg happens to line up with it.
+      if (this.traversal) {
+        _v3.crossVectors(right3, _k1.subVectors(leg.ankleTarget, leg.hip)).normalize();
+        _v3.addScaledVector(right3, f.side * 0.4); // knees splay out, clear of the wall
+      }
       solveTwoBone(leg.hip, leg.ankleTarget, DIMS.thigh, DIMS.shin, _v3, leg.knee, leg.ankle);
+      if (this.traversal && Humanoid.terrain.solidAt) this._clearKnee(leg, _v3, dt);
+      else leg.kneeTurn = 0;
       leg.thigh.place(leg.hip, leg.knee);
       leg.shin.place(leg.knee, leg.ankle);
-      quatFrom(leg.foot.quaternion, f.pitch, f.yaw, 0);
+      quatFrom(leg.foot.quaternion, f.pitch + f.heel, f.yaw, 0);
+      leg.toe.rotation.x = -f.heel; // toes stay flat on the ground
       leg.foot.position.copy(leg.ankle);
       leg.foot.position.y -= 0.035;
-      leg.foot.position.addScaledVector(_v1.set(Math.sin(f.yaw), 0, Math.cos(f.yaw)), 0.05);
+      leg.foot.position.addScaledVector(_v1.set(Math.sin(f.yaw), 0, Math.cos(f.yaw)), 0.03);
     }
 
     this._afterPose();

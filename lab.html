@@ -8,12 +8,37 @@
   <body>
     <div id="title">RIGOR <b>LAB</b> <a href="/">← back to the game</a></div>
     <div id="views">
+      <button data-view="quarter" type="button">Quarter</button>
       <button data-view="side" type="button">Side</button>
       <button data-view="front" type="button">Front</button>
       <button data-view="back" type="button">Back</button>
       <button data-view="game" type="button">Game camera</button>
     </div>
     <pre id="info"></pre>
+    <pre id="check" hidden title="Click to close"></pre>
+    <button id="help-toggle" type="button" title="วิธีใช้ (H)">? วิธีใช้</button>
+    <div id="help" hidden>
+      <h3>วิธีใช้ Lab <span>(กด H เปิด/ปิด)</span></h3>
+      <p class="note">Lab ไว้ดูและจูนท่าทาง ถ้าจะเล่นเกมกด “← back to the game” มุมซ้ายบน</p>
+      <dl>
+        <dt>เปลี่ยนสิ่งกีดขวาง</dt>
+        <dd>แผงขวา → Test → Obstacle · ช่อง Who เปลี่ยนเป็นซอมบี้</dd>
+        <dt>ดูท่าทีละจังหวะ</dt>
+        <dd>ลากแถบด้านล่าง · ขีดเหลือง = keyframe (คลิกได้) · Space เล่น/หยุด · <b>,</b> <b>.</b> ทีละเฟรม</dd>
+        <dt>กล้อง</dt>
+        <dd>ลากเมาส์หมุน · ล้อเมาส์ซูม · ปุ่ม Quarter / Side / Front / Back</dd>
+        <dt>ภาพซ้อนและเส้นทาง</dt>
+        <dd>แผงขวา → Display · เหลือง สะโพก · เขียว/ฟ้า มือซ้าย/ขวา · แดง/ชมพู เท้าซ้าย/ขวา</dd>
+        <dt>เดินเล่นเอง</dt>
+        <dd>Free walk → ติ๊ก Walk around · WASD เดิน · Shift วิ่ง · Space ปีน · R รีโหลด</dd>
+        <dt>แก้ท่า</dt>
+        <dd>Keys → เปิด Key แล้วลากค่า · เห็นผลทันที · Save = เกมใช้ท่านี้ · Reset to code = กลับค่าเดิม</dd>
+        <dt>ตรวจท่าอัตโนมัติ</dt>
+        <dd>Test → Check all moves · บอกว่ามือเอื้อมไม่ถึง ขายืดเกิน หรือข้อต่อจมเข้าไปในของ ที่กี่ % ของท่า (✓ = ผ่าน)</dd>
+        <dt>เทียบท่า</dt>
+        <dd>Compare A/B → Set baseline แล้วแก้ต่อ · ท่าเดิมจะซ้อนเป็นสีส้ม</dd>
+      </dl>
+    </div>
     <div id="timeline">
       <button id="play" type="button" title="Play / pause (Space)">▶</button>
       <button id="step-back" type="button" title="Back one frame (,)">◀|</button>

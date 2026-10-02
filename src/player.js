@@ -276,7 +276,7 @@ export class Player extends Humanoid {
     const up = new THREE.Vector3(0, 1, 0);
     const deg = Math.PI / 180;
     const armParts = (a) => [a.upper.mesh, a.fore.mesh, a.hand];
-    const upperParts = [this.chest, this.head, this.abdomen, this.neck.mesh, this.gun, this.mag];
+    const upperParts = [this.chest, this.head, this.abdomen, this.neck.mesh, this.gun, this.mag, ...this.arms.map((a) => a.shoulderMesh)];
     const lowerParts = [this.pelvis, ...this.legs.flatMap((l) => [l.thigh.mesh, l.shin.mesh, l.foot])];
 
     if (mode === 'halves') {

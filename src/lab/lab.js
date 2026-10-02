@@ -5,7 +5,7 @@ import { Humanoid } from '../humanoid.js';
 import { Player } from '../player.js';
 import { Zombie } from '../zombie.js';
 import { Gore } from '../gore.js';
-import { heightAt, findLedge, collideCircle } from '../level.js';
+import { heightAt, findLedge, collideCircle, solidAt } from '../level.js';
 import { traversalTiming } from '../traversal.js';
 import { TRAVERSAL_KEYS, cloneKeys, saveKeys, resetKeys, hasSavedKeys } from '../traversal-keys.js';
 import { loadParams, ZOMBIE_DEFAULTS, ZOMBIE_KEY } from '../params.js';
@@ -60,6 +60,7 @@ const lab = { colliders: [], meshes: [] };
 Humanoid.terrain = {
   heightAt: (x, z, maxY) => heightAt(lab, x, z, maxY),
   findLedge: (pos, dir) => findLedge(lab, pos, dir),
+  solidAt: (p) => solidAt(lab, p),
 };
 
 const mat = (color, roughness = 0.85) => new THREE.MeshStandardMaterial({ color, roughness });
@@ -100,7 +101,7 @@ const TESTS = [
   { name: 'Vault · barrier 0.85 m', depth: 0.6, build: (x) => addBox(x, 0, 2.4, 0.6, 0.85, '#8d8a83', { climb: true, vault: true }) },
   // 0.7 m: anything up to 0.6 m is just stepped onto (STEP_UP).
   { name: 'Vault · low wall 0.7 m', depth: 0.35, build: (x) => addBox(x, 0, 2.4, 0.35, 0.7, '#9a8f80', { climb: true, vault: true }) },
-  { name: 'Climb · car side 0.95 m', depth: 1.9, build: (x) => addCar(x, 0) },
+  { name: 'Climb · car side (onto the roof, 1.5 m)', depth: 1.9, build: (x) => addCar(x, 0) },
   { name: 'Climb · crate 1.0 m', depth: 1.2, build: (x) => addBox(x, 0, 1.6, 1.2, 1.0, '#8a7656') },
   { name: 'Climb · dumpster 1.34 m', depth: 1.1, build: (x) => addBox(x, 0, 2, 1.1, 1.34, '#2f4a3a') },
   { name: 'Climb · wall 1.6 m', depth: 1.6, build: (x) => addBox(x, 0, 2.6, 1.6, 1.6, '#6b6259') },
@@ -273,7 +274,8 @@ function refreshHelpers() {
 function setView(view) {
   const f = test().focus;
   const offsets = {
-    side: [4.2, 1.2, 0.4],
+    quarter: [3.2, 1.5, -3.4], // behind and to the side: nothing long gets in the way
+    side: [5.5, 1.9, 0.5], // high enough to see over a car's hood
     front: [0.6, 1.5, 4.2],
     back: [0.8, 2.2, -4.6],
     game: [0, 0.82 * 9, -0.57 * 9],
@@ -295,7 +297,9 @@ const ui = {
   speed: document.getElementById('speed'),
   loop: document.getElementById('loop'),
   info: document.getElementById('info'),
+  check: document.getElementById('check'),
 };
+ui.check.addEventListener('click', () => (ui.check.hidden = true));
 let scrubbing = false;
 
 function setPlaying(on) {
@@ -343,11 +347,25 @@ const setup = gui.addFolder('Test');
 setup.add(state, 'test', testNames).name('Obstacle').onChange(() => {
   buildKeysGui();
   restartRun();
-  setView('side');
+  setView('quarter');
   refreshHelpers();
 });
 setup.add(state, 'subject', ['player', 'zombie']).name('Who').onChange(selectSubject);
 setup.add({ run: () => setPlaying(true) || restartRun() }, 'run').name('Run again');
+const checkResult = { text: '' };
+setup
+  .add(
+    {
+      check: () => {
+        setPlaying(false);
+        checkResult.text = checkAll();
+        ui.check.textContent = checkResult.text;
+        ui.check.hidden = false;
+      },
+    },
+    'check',
+  )
+  .name('Check all moves');
 
 const view = gui.addFolder('Display');
 view.add(state, 'onion').name('Onion skin').onChange(refreshHelpers);
@@ -496,6 +514,141 @@ function selectSubject() {
   refreshHelpers();
 }
 
+// ---------------------------------------------------------------- pose check
+
+// Steps through a move and measures what's hard to see by eye: hands that
+// can't reach their hold, legs stretched past their length, and joints sunk
+// inside an obstacle. Distances in cm.
+function checkMove(testIndex, steps = 50) {
+  const saved = state.test;
+  state.test = testIndex;
+  const body = subject();
+  const worst = { hand: [0, 0], leg: [0, 0], inside: {} };
+  const depthInside = (c, p) => {
+    const dx = p.x - c.x;
+    const dz = p.z - c.z;
+    const lx = dx * c.cos - dz * c.sin;
+    const lz = dx * c.sin + dz * c.cos;
+    if (Math.abs(lx) > c.hx || Math.abs(lz) > c.hz || p.y >= c.top || p.y < 0.02) return 0;
+    return Math.min(c.hx - Math.abs(lx), c.hz - Math.abs(lz), c.top - p.y);
+  };
+  let ok = true;
+  const lastBend = [null, null];
+  const measure = (k) => {
+    ['left', 'right'].forEach((h, j) => {
+      // Only count a hand meant to be firmly on the ledge, not one peeling off.
+      if (body.handPlant[j] < 0.75) return;
+      // Measured against where the hand actually is (it travels on a spring),
+      // so this only catches an arm too short to get there.
+      const miss = body.arms[j].wrist.distanceTo(body.hands[h].pos);
+      if (miss > worst.hand[0]) worst.hand = [miss, k];
+    });
+    for (const [j, leg] of body.legs.entries()) {
+      const miss = leg.ankle.distanceTo(leg.ankleTarget);
+      if (miss > worst.leg[0]) worst.leg = [miss, k];
+      // A real deep squat still keeps the ankle ~25 cm from the hip. Folded
+      // tighter than that, a tiny foot move swings the whole knee around.
+      const fold = leg.hip.distanceTo(leg.ankleTarget);
+      if (fold < (worst.fold?.[0] ?? Infinity)) worst.fold = [fold, k, j ? 'R' : 'L'];
+    }
+    // Knee flicks: a knee jumping much further in one step than the hip and
+    // foot it hangs between is what reads as legs flailing or tangling.
+    body.legs.forEach((leg, j) => {
+      const now = { knee: leg.knee.clone(), hip: leg.hip.clone(), ankle: leg.ankle.clone() };
+      const last = lastBend[j];
+      if (last) {
+        const extra = now.knee.distanceTo(last.knee) - Math.max(now.hip.distanceTo(last.hip), now.ankle.distanceTo(last.ankle));
+        if (extra > (worst.flick?.[0] ?? 0)) worst.flick = [extra, k, j ? 'R' : 'L'];
+      }
+      lastBend[j] = now;
+    });
+    // Crossed legs: across the hips, the left knee/ankle should stay left of the right one.
+    const across = new THREE.Vector3(-Math.cos(body.pelvisYaw), 0, Math.sin(body.pelvisYaw));
+    for (const joint of ['knee', 'ankle']) {
+      const cross = across.dot(body.legs[0][joint]) - across.dot(body.legs[1][joint]);
+      if (cross > (worst.cross?.[0] ?? 0)) worst.cross = [cross, k, joint];
+    }
+    const joints = {
+      hips: body.pelvisPos,
+      chest: body.chestPos,
+      head: body.headPos,
+      'L knee': body.legs[0].knee,
+      'R knee': body.legs[1].knee,
+      'L ankle': body.legs[0].ankle,
+      'R ankle': body.legs[1].ankle,
+      'L elbow': body.arms[0].elbow,
+      'R elbow': body.arms[1].elbow,
+    };
+    for (const [name, p] of Object.entries(joints)) {
+      for (const c of lab.colliders) {
+        const d = depthInside(c, p);
+        if (d > 0.03 && (!worst.inside[name] || d > worst.inside[name][0])) worst.inside[name] = [d, k];
+      }
+    }
+  };
+  // Play the move in real time, exactly as the game would (springs, easing
+  // and all), measuring as it goes.
+  if (!beginMove(body)) ok = false;
+  else {
+    const duration = body.traversal.duration;
+    const h = 1 / 120;
+    let t = 0;
+    let next = 0;
+    while (body.traversal) {
+      body._updateTraversal(h);
+      if (!body.traversal) break;
+      body._updateYaws(h);
+      body._updateLean(h);
+      body._poseBody(h);
+      t += h;
+      if (t >= next) {
+        next += duration / steps;
+        measure(t / duration);
+      }
+    }
+  }
+  state.test = saved;
+  const cm = ([d, k]) => `${Math.round(d * 100)} cm @ ${Math.round(k * 100)}%`;
+  if (!ok) return `${TESTS[testIndex].name}: no ledge found`;
+  const issues = [];
+  if (worst.hand[0] > 0.05) issues.push(`hand can't reach ${cm(worst.hand)}`);
+  if (worst.leg[0] > 0.05) issues.push(`leg overstretched ${cm(worst.leg)}`);
+  if (worst.cross && worst.cross[0] > 0.02) issues.push(`legs crossed at the ${worst.cross[2]} ${cm(worst.cross)}`);
+  if (worst.fold && worst.fold[0] < 0.22) issues.push(`${worst.fold[2]} leg folded too tight (hip to ankle ${cm(worst.fold)})`);
+  // 50 steps over a ~1 s move: a knee outrunning its hip and foot by more
+  // than ~4 cm in one 20 ms step reads as a flick.
+  if (worst.flick && worst.flick[0] > 0.04) {
+    issues.push(`${worst.flick[2]} knee flicks ${Math.round(worst.flick[0] * 100)} cm @ ${Math.round(worst.flick[1] * 100)}%`);
+  }
+  for (const [name, w] of Object.entries(worst.inside)) issues.push(`${name} inside ${cm(w)}`);
+  return `${issues.length ? '⚠' : '✓'} ${TESTS[testIndex].name}${issues.length ? ': ' + issues.join(', ') : ''}`;
+}
+
+function checkAll() {
+  const report = TESTS.map((_, i) => checkMove(i)).join('\n');
+  poseAt(subject(), state.k);
+  return report;
+}
+
+// ---------------------------------------------------------------- help
+
+const help = document.getElementById('help');
+function toggleHelp(show = help.hidden) {
+  help.hidden = !show;
+  try {
+    localStorage.setItem('rigor.labHelpSeen', '1');
+  } catch {
+    // ignore
+  }
+}
+document.getElementById('help-toggle').addEventListener('click', () => toggleHelp());
+// Open it the first time someone visits the lab.
+try {
+  if (!localStorage.getItem('rigor.labHelpSeen')) toggleHelp(true);
+} catch {
+  toggleHelp(true);
+}
+
 // ---------------------------------------------------------------- input (free walk)
 
 const keys = new Set();
@@ -519,6 +672,7 @@ window.addEventListener('keydown', (e) => {
     view.controllers.forEach((c) => c.updateDisplay());
   }
   if (e.code === 'KeyR' && state.free) player.startReload();
+  if (e.code === 'KeyH') toggleHelp();
 });
 window.addEventListener('keyup', (e) => keys.delete(e.code));
 window.addEventListener('blur', () => keys.clear());
@@ -648,9 +802,11 @@ window.addEventListener('resize', () => {
 rebuildGhosts();
 buildKeysGui();
 restartRun();
-setView('side');
+setView('quarter');
 refreshHelpers();
 setPlaying(true);
 requestAnimationFrame(frame);
 
-if (import.meta.env.DEV) window.__lab = { state, player, seek, poseAt, TESTS, setView, refreshHelpers };
+if (import.meta.env.DEV) {
+  window.__lab = { state, player, seek, poseAt, beginMove, TESTS, setView, refreshHelpers, lab, controls, camera, keys: TRAVERSAL_KEYS, checkMove, checkAll };
+}

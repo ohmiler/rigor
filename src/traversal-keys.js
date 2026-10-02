@@ -26,29 +26,54 @@ const hand = (a, s, u, w) => ({ a, s, u, w });
 const foot = (a, aFrom, s, u, uFrom) => ({ a, aFrom, s, u, uFrom });
 const pelvis = (a, aFrom, u, uFrom, s = 0) => ({ a, aFrom, u, uFrom, s });
 
-const climbHands = (w) => [hand(0.05, -0.21, 0.02, w), hand(0.05, 0.21, 0.02, w)];
-const vaultHand = (w) => [hand(0.08, -0.17, 0.02, w), null];
+// Hands go well onto the top, not on the lip: with the torso pitched over
+// them, that's what keeps the shoulders within an arm's length.
+const climbHands = (w) => [hand(0.16, -0.21, 0.02, w), hand(0.16, 0.21, 0.02, w)];
+const vaultHand = (w) => [hand(0.15, -0.17, 0.02, w), null];
 
+// A few rules every key set here follows (the lab's "Check all moves" tests them):
+//  - a foot never cuts through the obstacle's corner: it reaches the lip
+//    from outside first, then steps in;
+//  - hip to ankle stays at least ~25 cm (a real deep squat), or the knee
+//    whips around with every small foot move;
+//  - planted hands stay within an arm's length of the shoulders.
 export const DEFAULT_KEYS = {
   climb: [
-    // Settle in against the side, hands up on the edge, gun swung aside.
-    { t: 0.16, pelvis: pelvis(-0.42, 'edge', -0.16, 'start'), pitch: 0.3, roll: 0, hipYaw: 0, stow: 1, hands: climbHands(1), feet: ['start', 'start'] },
-    // Jump and pull: chest goes over the edge, lead foot finds the top.
-    { t: 0.4, pelvis: pelvis(-0.3, 'edge', -0.12, 'top'), pitch: 0.95, roll: 0, hipYaw: 0, stow: 1, hands: climbHands(1), feet: ['hang', foot(0.04, 'edge', 0.1, 0, 'top')] },
-    // Push down through the hands; hips over the edge, trailing leg scrapes up the side.
-    { t: 0.62, pelvis: pelvis(0.06, 'edge', 0.36, 'top'), pitch: 0.75, roll: 0, hipYaw: 0, stow: 1, hands: climbHands(1), feet: [foot(-0.1, 'edge', -0.12, -0.3, 'top'), foot(0.14, 'edge', 0.1, 0, 'top')] },
-    // Crouched on top, hands letting go.
-    { t: 0.8, pelvis: pelvis(0.26, 'edge', 0.6, 'top'), pitch: 0.35, roll: 0, hipYaw: 0, stow: 0.6, hands: climbHands(0.5), feet: [foot(0.24, 'edge', -0.12, 0, 'top'), foot(0.34, 'edge', 0.12, 0, 'top')] },
+    // Step in and slap both hands on top; sink into a crouch to load the jump.
+    { t: 0.13, pelvis: pelvis(-0.34, 'edge', -0.24, 'start'), pitch: 0.38, roll: 0, hipYaw: 0, stow: 1, hands: climbHands(1), feet: ['start', 'start'] },
+    // Jump and pull: hips up to the edge; trailing foot pushes off the ground,
+    // lead foot plants on the face well below the lip.
+    { t: 0.3, pelvis: pelvis(-0.2, 'edge', -0.12, 'top'), pitch: 0.5, roll: 0, hipYaw: 0, stow: 1, hands: climbHands(1), feet: ['start', foot(-0.15, 'edge', 0.14, -0.55, 'top')] },
+    // Arms lock: lead foot walks up the face, trailing leg hangs.
+    { t: 0.44, pelvis: pelvis(-0.1, 'edge', 0.1, 'top'), pitch: 0.6, roll: 0, hipYaw: 0, stow: 1, hands: climbHands(1), feet: ['hang', foot(-0.06, 'edge', 0.14, -0.3, 'top')] },
+    // The press: torso tips nearly flat over the hands so the hips can rise,
+    // and the lead foot reaches the lip from outside.
+    { t: 0.5, pelvis: pelvis(-0.04, 'edge', 0.4, 'top'), pitch: 1.0, roll: 0, hipYaw: 0, stow: 1, hands: climbHands(0.7), feet: ['hang', foot(-0.04, 'edge', 0.13, 0.05, 'top')] },
+    // Lead foot steps in under the hips; hands start to come off.
+    { t: 0.58, pelvis: pelvis(0.02, 'edge', 0.42, 'top'), pitch: 0.8, roll: 0, hipYaw: 0, stow: 1, hands: climbHands(0.4), feet: ['hang', foot(0.22, 'edge', 0.12, 0, 'top')] },
+    // Step through: trailing foot comes up the outside to the lip, weight
+    // over the lead foot ('land' = the top for a box, the roof for a car).
+    { t: 0.68, pelvis: pelvis(0.18, 'edge', -0.42, 'land'), pitch: 0.45, roll: 0, hipYaw: 0, stow: 0.8, hands: climbHands(0.1), feet: [foot(-0.05, 'edge', -0.14, 0.1, 'top'), foot(0.22, 'edge', 0.12, 0, 'top')] },
+    // Both feet on top, crouched, rising.
+    { t: 0.8, pelvis: pelvis(0.28, 'edge', -0.3, 'land'), pitch: 0.25, roll: 0, hipYaw: 0, stow: 0.5, hands: climbHands(0), feet: [foot(0.26, 'edge', -0.12, 0, 'land'), foot(0.3, 'edge', 0.12, 0, 'land')] },
     // Stand up and bring the gun back.
     { t: 1, pelvis: pelvis(0, 'end', 0, 'land'), pitch: 0, roll: 0, hipYaw: 0, stow: 0, hands: climbHands(0), feet: ['rest', 'rest'] },
   ],
+  // A tuck vault: one hand plants and pushes, both knees come up to the chest
+  // and the legs pass over together in front. (A speed vault swings the legs
+  // out sideways, which tangles the legs; this keeps them in front, where a
+  // knee naturally bends up.)
   vault: [
-    // Last step in: left hand plants on top, gun drops a little for clearance.
-    { t: 0.22, pelvis: pelvis(-0.35, 'edge', -0.12, 'start'), pitch: 0.25, roll: 0.1, hipYaw: 0, stow: 0.5, hands: vaultHand(1), feet: ['start', 'start'] },
-    // Over the top: hips turn, both legs swing past on the right of the hand.
-    { t: 0.5, pelvis: pelvis(0, 'mid', 0.3, 'top', 0.1), pitch: 0.2, roll: 0.5, hipYaw: -0.85, stow: 0.5, hands: vaultHand(1), feet: [foot(0, 'mid', 0.32, 0.12, 'top'), foot(0.12, 'mid', 0.44, 0.18, 'top')] },
-    // Coming down: lead foot reaches for the ground first.
-    { t: 0.76, pelvis: pelvis(0.25, 'far', -0.18, 'land', 0.05), pitch: 0.15, roll: 0.15, hipYaw: -0.3, stow: 0.5, hands: vaultHand(0.2), feet: [foot(0.12, 'far', 0.18, 0.22, 'land'), foot(0.42, 'far', 0.12, 0, 'land')] },
+    // Last step in: left hand reaching for the top.
+    { t: 0.22, pelvis: pelvis(-0.28, 'edge', -0.1, 'start'), pitch: 0.3, roll: -0.15, hipYaw: 0, stow: 0.5, hands: vaultHand(0.7), feet: ['start', 'start'] },
+    // Push off: hips spring up while the legs stay long behind, driving off the ground.
+    { t: 0.32, pelvis: pelvis(-0.12, 'edge', 0.22, 'top', 0.04), pitch: 0.35, roll: -0.35, hipYaw: -0.15, stow: 0.5, hands: vaultHand(0.7), feet: [foot(-0.5, 'edge', -0.06, -0.6, 'top'), foot(-0.55, 'edge', 0.12, -0.65, 'top')] },
+    // Tuck: with the hips up, knees snap to the chest; feet at the lip, just above it.
+    { t: 0.38, pelvis: pelvis(-0.02, 'edge', 0.4, 'top', 0.05), pitch: 0.3, roll: -0.4, hipYaw: -0.18, stow: 0.5, hands: vaultHand(0.6), feet: [foot(-0.08, 'edge', -0.04, 0.03, 'top'), foot(-0.12, 'edge', 0.13, 0.02, 'top')] },
+    // Over: hand pushes away, tucked legs pass over the top in front of the hips.
+    { t: 0.44, pelvis: pelvis(0, 'mid', 0.56, 'top', 0.06), pitch: 0.25, roll: -0.45, hipYaw: -0.2, stow: 0.5, hands: vaultHand(0.5), feet: [foot(0.18, 'mid', -0.04, 0.04, 'top'), foot(0.12, 'mid', 0.14, 0.03, 'top')] },
+    // Coming down past the far side, right foot reaching for the ground.
+    { t: 0.62, pelvis: pelvis(0.2, 'far', -0.12, 'land', 0.02), pitch: 0.2, roll: -0.15, hipYaw: 0, stow: 0.4, hands: vaultHand(0.1), feet: [foot(0.35, 'far', -0.08, 0.15, 'land'), foot(0.45, 'far', 0.1, 0, 'land')] },
     // Land and run on.
     { t: 1, pelvis: pelvis(0, 'end', 0, 'land'), pitch: 0, roll: 0, hipYaw: 0, stow: 0, hands: vaultHand(0), feet: ['rest', 'rest'] },
   ],

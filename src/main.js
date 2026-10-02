@@ -5,7 +5,7 @@ import { createPanel } from './panel.js';
 import { Effects } from './effects.js';
 import { Gore } from './gore.js';
 import { Grapple } from './grapple.js';
-import { buildStreet, collideCircle, insideCollider, heightAt, findLedge, STREET_LENGTH } from './level.js';
+import { buildStreet, collideCircle, insideCollider, heightAt, findLedge, solidAt, STREET_LENGTH } from './level.js';
 import { Humanoid } from './humanoid.js';
 import { loadParams, ZOMBIE_DEFAULTS, ZOMBIE_KEY, VISIBILITY } from './params.js';
 import './style.css';
@@ -53,6 +53,7 @@ const level = buildStreet(scene);
 Humanoid.terrain = {
   heightAt: (x, z, maxY) => heightAt(level, x, z, maxY),
   findLedge: (pos, dir) => findLedge(level, pos, dir),
+  solidAt: (p) => solidAt(level, p),
 };
 
 // Day is kept around as a debugging view; night is the game.

@@ -235,6 +235,15 @@ function contains(c, x, z, margin = 0) {
   return Math.abs(lx) <= c.hx + margin && Math.abs(lz) <= c.hz + margin;
 }
 
+// Is this point inside something solid (below an obstacle's top)?
+export function solidAt(level, p) {
+  if (p.y < 0.02) return false;
+  for (const c of level.colliders) {
+    if (p.y < c.top && contains(c, p.x, p.z)) return true;
+  }
+  return false;
+}
+
 // Height of the walkable surface under (x, z), ignoring anything taller than
 // `maxY` (a wall you're beside isn't a floor you're on).
 export function heightAt(level, x, z, maxY = Infinity) {
@@ -256,7 +265,7 @@ export function findLedge(level, pos, dir) {
   for (const reach of [0.35, 0.55, 0.8]) {
     const px = pos.x + dir.x * reach;
     const pz = pos.z + dir.z * reach;
-    for (const c of level.colliders) {
+    for (let c of level.colliders) {
       const rise = c.top - feet;
       if (!c.climb || rise < 0.35 || rise > 1.6 || !contains(c, px, pz)) continue;
       // Ignore boxes we're already standing on top of.
@@ -265,8 +274,24 @@ export function findLedge(level, pos, dir) {
       // Walk back to the exact near edge so hands land on the lip, not inside.
       let near = 0;
       while (near < reach && !contains(c, pos.x + dir.x * near, pos.z + dir.z * near)) near += 0.03;
-      const ex0 = pos.x + dir.x * near;
-      const ez0 = pos.z + dir.z * near;
+      let ex0 = pos.x + dir.x * near;
+      let ez0 = pos.z + dir.z * near;
+
+      // A lip too narrow to stand on, right below a higher surface (a car's
+      // sill under its roof): grab the higher edge and climb straight onto it.
+      if (!c.vault) {
+        for (const o of level.colliders) {
+          if (o === c || !o.climb || o.top <= c.top || o.top - c.top > STEP_UP || o.top - feet > 1.7) continue;
+          let d = 0;
+          while (d < 0.35 && !contains(o, ex0 + dir.x * d, ez0 + dir.z * d)) d += 0.03;
+          if (d < 0.35) {
+            ex0 += dir.x * d;
+            ez0 += dir.z * d;
+            c = o;
+            break;
+          }
+        }
+      }
       const edge = new THREE.Vector3(ex0, c.top, ez0);
 
       // How thick is it along our direction? Thin and low means go over.
@@ -284,7 +309,9 @@ export function findLedge(level, pos, dir) {
       // Otherwise climb up and stand on it, a little in from the edge.
       const step = Math.min(0.5, Math.max(through - 0.15, 0.15));
       const end = new THREE.Vector3(ex0 + dir.x * step, 0, ez0 + dir.z * step);
-      end.y = heightAt(level, end.x, end.z, c.top + 0.01);
+      // Finish on whatever is walkable from this top: a car's side lip leads
+      // straight up onto its roof rather than leaving you pressed to the glass.
+      end.y = heightAt(level, end.x, end.z, c.top + STEP_UP);
       return { type: 'climb', top: c.top, edge, through, end, dir: dir.clone() };
     }
   }
