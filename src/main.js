@@ -5,6 +5,7 @@ import { createPanel } from './panel.js';
 import { Effects } from './effects.js';
 import { Gore } from './gore.js';
 import { Grapple } from './grapple.js';
+import { buildStreet, collideCircle, insideCollider, STREET_LENGTH } from './level.js';
 import { loadParams, ZOMBIE_DEFAULTS, ZOMBIE_KEY, VISIBILITY } from './params.js';
 import './style.css';
 
@@ -34,23 +35,20 @@ scene.add(nearGlow);
 const sun = new THREE.DirectionalLight('#ffffff', 2.2);
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
-Object.assign(sun.shadow.camera, { left: -12, right: 12, top: 12, bottom: -12, near: 1, far: 40 });
+Object.assign(sun.shadow.camera, { left: -16, right: 16, top: 16, bottom: -16, near: 1, far: 50 });
 sun.shadow.bias = -0.0005;
 sun.shadow.normalBias = 0.02;
 scene.add(sun, sun.target);
 
 const ground = new THREE.Mesh(
-  new THREE.PlaneGeometry(200, 200).rotateX(-Math.PI / 2),
-  new THREE.MeshStandardMaterial({ color: '#56617a', roughness: 1 }),
+  new THREE.PlaneGeometry(300, 300).rotateX(-Math.PI / 2),
+  new THREE.MeshStandardMaterial({ color: '#3a3b3d', roughness: 1 }),
 );
+ground.position.z = STREET_LENGTH / 2;
 ground.receiveShadow = true;
 scene.add(ground);
 
-const grid = new THREE.GridHelper(200, 200, '#76839f', '#6a7690');
-grid.position.y = 0.002;
-grid.material.transparent = true;
-grid.material.opacity = 0.35;
-scene.add(grid);
+const level = buildStreet(scene);
 
 // Day is kept around as a debugging view; night is the game.
 function applyEnvironment() {
@@ -63,7 +61,11 @@ function applyEnvironment() {
   sun.intensity = night ? params.moonLight : 2.2;
   sun.color.set(night ? '#8fa6d6' : '#ffffff');
   nearGlow.intensity = night ? params.nearGlow : 0;
-  grid.visible = !night;
+  for (const { light, bulb } of level.lamps) {
+    light.intensity = night ? 9 : 0;
+    bulb.material.color.set(night ? '#ffd59a' : '#55534e');
+  }
+  level.goalParts.flare.intensity = night ? 6 : 0;
   renderer.toneMappingExposure = params.exposure;
   for (const b of visibilityButtons.children) b.classList.toggle('on', b.textContent === params.visibility);
 }
@@ -89,43 +91,9 @@ function cycleVisibility() {
 }
 applyEnvironment();
 
-// Crates: cover, scale reference, and something to collide with.
-const crateMat = new THREE.MeshStandardMaterial({ color: '#8a7656', roughness: 0.9 });
-const obstacles = [];
-for (const [x, z, s] of [[4, 5, 1.4], [-5, 3, 1.4], [6, -4, 1.6], [-3, -6, 1.4], [0, 9, 1.4]]) {
-  const crate = new THREE.Mesh(new THREE.BoxGeometry(s, s, s), crateMat);
-  crate.position.set(x, s / 2, z);
-  crate.castShadow = crate.receiveShadow = true;
-  crate.userData.half = s / 2;
-  scene.add(crate);
-  obstacles.push(crate);
-}
-
-// Push a circle (x, z, radius) out of every crate.
-function collideWithCrates(pos, radius) {
-  for (const crate of obstacles) {
-    const h = crate.userData.half;
-    const cx = THREE.MathUtils.clamp(pos.x, crate.position.x - h, crate.position.x + h);
-    const cz = THREE.MathUtils.clamp(pos.z, crate.position.z - h, crate.position.z + h);
-    const dx = pos.x - cx;
-    const dz = pos.z - cz;
-    const d2 = dx * dx + dz * dz;
-    if (d2 < radius * radius && d2 > 1e-8) {
-      const d = Math.sqrt(d2);
-      pos.x += (dx / d) * (radius - d);
-      pos.z += (dz / d) * (radius - d);
-    }
-  }
-}
-
-function insideCrate(x, z, margin) {
-  return obstacles.some(
-    (c) => Math.abs(x - c.position.x) < c.userData.half + margin && Math.abs(z - c.position.z) < c.userData.half + margin,
-  );
-}
-
 const player = new Player(scene, params);
-const effects = new Effects(scene, obstacles);
+player.teleport(level.start);
+const effects = new Effects(scene, level.meshes);
 const gore = new Gore(scene);
 
 // Feedback for the grab loop: red flash on bites, slow motion on death.
@@ -152,35 +120,59 @@ const grapple = new Grapple(player, gore, params, {
 function restart() {
   gore.clear();
   grapple.reset();
-  player.reset();
+  player.reset(level.start);
   setSkeleton(params.showSkeleton);
   kills = 0;
+  runTime = 0;
+  escaped = false;
   document.getElementById('dead').hidden = true;
-  spawnZombies();
+  document.getElementById('won').hidden = true;
+  spawnLevelZombies();
 }
 
 // ---------------------------------------------------------------- zombies
 
 let zombies = [];
 let kills = 0;
+let runTime = 0;
+let escaped = false;
 
-function spawnZombies() {
+function addZombie(x, z) {
+  const zombie = new Zombie(scene, zparams, new THREE.Vector3(x, 0, z));
+  zombie.setSkeleton(params.showSkeleton);
+  zombies.push(zombie);
+}
+
+// The street's own population, jittered so no two runs are the same.
+function spawnLevelZombies() {
   for (const z of zombies) z.dispose();
   zombies = [];
-  for (let i = 0; i < zparams.count; i++) {
+  for (const s of level.zombieSpawns) {
     let x, z;
+    let tries = 0;
     do {
-      const a = Math.random() * Math.PI * 2;
-      const r = 9 + Math.random() * 11;
-      x = player.pos.x + Math.sin(a) * r;
-      z = player.pos.z + Math.cos(a) * r;
-    } while (insideCrate(x, z, 0.5));
-    const zombie = new Zombie(scene, zparams, new THREE.Vector3(x, 0, z));
-    zombie.setSkeleton(params.showSkeleton);
-    zombies.push(zombie);
+      x = s.x + (Math.random() - 0.5) * 2;
+      z = s.z + (Math.random() - 0.5) * 3;
+    } while (insideCollider(level, x, z, 0.4) && ++tries < 10);
+    if (tries < 10) addZombie(x, z);
   }
 }
-spawnZombies();
+spawnLevelZombies();
+
+// N: an extra wave around the player (for testing, or for punishment).
+function spawnWave() {
+  for (let i = 0; i < zparams.count; i++) {
+    let x, z;
+    let tries = 0;
+    do {
+      const a = Math.random() * Math.PI * 2;
+      const r = 8 + Math.random() * 8;
+      x = player.pos.x + Math.sin(a) * r;
+      z = player.pos.z + Math.cos(a) * r;
+    } while (insideCollider(level, x, z, 0.4) && ++tries < 20);
+    if (tries < 20) addZombie(x, z);
+  }
+}
 
 function setSkeleton(on) {
   params.showSkeleton = on;
@@ -191,7 +183,7 @@ setSkeleton(params.showSkeleton);
 
 createPanel(params, zparams, player, {
   onSkeleton: setSkeleton,
-  onSpawn: spawnZombies,
+  onSpawn: spawnWave,
   onFullscreen: () => enterFullscreen(),
   onEnvironment: applyEnvironment,
   onVisibility: setVisibility,
@@ -228,16 +220,30 @@ player.onShot = (muzzle, dir) => {
   shake = Math.min(shake + params.cameraShake, params.cameraShake * 3);
 };
 
+const NO_INPUT = { x: 0, z: 0, walk: false, sprint: false, fire: false, aimPoint: null };
+
 function updateWorld(dt, input) {
-  player.update(dt, input);
+  player.update(dt, escaped ? NO_INPUT : input);
   const world = { player, zombies, grapple };
   for (const z of zombies) z.update(dt, world);
+  if (player.state === 'normal' || player.state === 'grabbed') runTime += dt;
 
-  // Bodies can't overlap crates, and the living can't walk through each other.
-  if (player.state !== 'dead') collideWithCrates(player.pos, 0.3);
+  // Made it to the extraction point alive.
+  if (!escaped && player.state === 'normal' && player.pos.distanceTo(level.goal.pos) < level.goal.radius) {
+    escaped = true;
+    player.state = 'escaped'; // can't be grabbed any more
+    const m = Math.floor(runTime / 60);
+    const s = Math.floor(runTime % 60).toString().padStart(2, '0');
+    document.getElementById('won-sub').textContent =
+      `Time ${m}:${s} · ${kills} killed · ${Math.round(player.health)} health left`;
+    document.getElementById('won').hidden = false;
+  }
+
+  // Bodies can't overlap walls, cars or each other.
+  if (player.state !== 'dead') collideCircle(level, player.pos, 0.3);
   for (const z of zombies) {
     if (z.dead) continue;
-    collideWithCrates(z.pos, 0.3);
+    collideCircle(level, z.pos, 0.3);
     // Grabbers and feeders are meant to be up close.
     if (player.state !== 'normal' || z.state === 'grab') continue;
     const dx = player.pos.x - z.pos.x;
@@ -316,9 +322,9 @@ window.addEventListener('keydown', (e) => {
   }
   if (e.repeat) return;
   if (e.code === 'Space' || e.code === 'KeyE') strugglePresses++;
-  if (e.code === 'Enter' && player.state === 'dead') restart();
+  if (e.code === 'Enter' && (player.state === 'dead' || escaped)) restart();
   if (e.code === 'KeyR') player.startReload();
-  if (e.code === 'KeyN') spawnZombies();
+  if (e.code === 'KeyN') spawnWave();
   if (e.code === 'KeyT') params.slowMo = !params.slowMo;
   if (e.code === 'KeyP') params.paused = !params.paused;
   if (e.code === 'KeyF') player.toggleFlashlight();
@@ -391,7 +397,7 @@ function updateCamera(dt, snap = false) {
   const k = snap ? 1 : 1 - Math.exp(-8 * dt);
   camTarget.lerp(camGoal, k);
   // Push in close while grabbed or dead.
-  const zoomGoal = player.state === 'normal' ? 1 : player.state === 'grabbed' ? 0.6 : 0.5;
+  const zoomGoal = { grabbed: 0.6, dead: 0.5 }[player.state] ?? 1;
   camZoom += (zoomGoal - camZoom) * (1 - Math.exp(-4 * dt));
   const dist = camDist * camZoom;
   camPos.set(camTarget.x, camTarget.y + dist * 0.82, camTarget.z - dist * 0.57);
@@ -407,7 +413,8 @@ function updateCamera(dt, snap = false) {
     camera.position.z += (Math.random() * 2 - 1) * shake;
     shake = Math.max(shake - dt * 1.5, 0);
   }
-  sun.position.set(player.pos.x - 6, 12, player.pos.z - 4);
+  // High sun so the buildings don't drown the road in shadow.
+  sun.position.set(player.pos.x - 5, 22, player.pos.z - 3);
   sun.target.position.copy(player.pos);
 }
 updateCamera(0, true);
@@ -425,6 +432,7 @@ const ui = {
   struggle: document.getElementById('struggle'),
   struggleFill: document.getElementById('struggle-fill'),
   biteFill: document.getElementById('bite-fill'),
+  objective: document.getElementById('objective'),
 };
 const timer = new THREE.Timer();
 timer.connect(document);
@@ -441,6 +449,13 @@ function updateUI(real) {
     ui.struggleFill.style.width = `${grapple.struggle * 100}%`;
     ui.biteFill.style.width = `${grapple.biteProgress * 100}%`;
   }
+  const toGoal = Math.max(player.pos.distanceTo(level.goal.pos) - level.goal.radius, 0);
+  ui.objective.textContent = escaped ? 'EXTRACTED' : `EXTRACTION ▲ ${Math.round(toGoal)} m`;
+
+  // The extraction ring breathes so it reads as "go here".
+  const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 300);
+  level.goalParts.goalRing.material.opacity = 0.5 + pulse * 0.5;
+  level.goalParts.beam.material.opacity = 0.12 + pulse * 0.1;
 }
 
 function frame(timestamp) {
@@ -477,5 +492,5 @@ requestAnimationFrame(frame);
 
 // Dev-only handle for poking at the game from the browser console.
 if (import.meta.env.DEV) {
-  window.__rigor = { player, grapple, gore, params, zparams, restart, get zombies() { return zombies; } };
+  window.__rigor = { player, grapple, gore, params, zparams, level, restart, get zombies() { return zombies; } };
 }

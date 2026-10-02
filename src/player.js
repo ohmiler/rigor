@@ -99,14 +99,21 @@ export class Player extends Humanoid {
     this._settle();
   }
 
-  // Fresh body at the origin (the old one may be in pieces).
-  reset() {
+  // Stand at `position` with feet and hands settled.
+  teleport(position) {
+    this.pos.copy(position);
+    this.vel.set(0, 0, 0);
+    this._settle();
+  }
+
+  // Fresh body at `spawn` (the old one may be in pieces).
+  reset(spawn = new THREE.Vector3()) {
     this.dispose();
     for (const d of this.drops) this.body.remove(d.mesh);
     this.drops = [];
     this._buildBody(PLAYER_LOOK);
     this._buildGun();
-    this.pos.set(0, 0, 0);
+    this.pos.copy(spawn);
     this.vel.set(0, 0, 0);
     this.accel.set(0, 0, 0);
     this.lean.set(0, 0);

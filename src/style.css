@@ -129,6 +129,46 @@ canvas {
   background: radial-gradient(ellipse at center, transparent 45%, rgba(150, 0, 0, 0.75) 100%);
 }
 
+#objective {
+  position: fixed;
+  top: 54px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  color: #7ee2a8;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.7);
+  pointer-events: none;
+}
+
+#won {
+  position: fixed;
+  top: 34%;
+  left: 50%;
+  transform: translateX(-50%);
+  text-align: center;
+  pointer-events: none;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.6);
+}
+
+#won .title {
+  font-size: 52px;
+  font-weight: 800;
+  letter-spacing: 0.18em;
+  color: #7ee2a8;
+}
+
+#won .sub {
+  font-size: 15px;
+  margin-top: 8px;
+  color: #dfe6f3;
+}
+
+#won[hidden] {
+  display: none;
+}
+
 #struggle,
 #dead {
   position: fixed;
