@@ -1,0 +1,153 @@
+// Every tunable "lever" lives here. The panel edits this object live.
+export const DEFAULTS = {
+  // Playback
+  timeScale: 1,
+  slowMo: false,
+  paused: false,
+  showSkeleton: false,
+
+  // Movement
+  runSpeed: 4.0,
+  walkSpeed: 1.6,
+  acceleration: 14,
+  aimTurnRate: 18,
+  faceMouse: true,
+
+  // Waist & spine
+  maxHipOffset: 55, // degrees the legs may point away from the aim
+  hipTurnRate: 10,
+  pelvisTwistShare: 0.3, // how much of the waist twist the pelvis takes
+  gunLead: -13, // shoulders turned relative to the gun (degrees)
+
+  // Torso physics
+  leanAccel: 0.02,
+  leanSpeed: 0.03,
+  leanStiffness: 60,
+  leanDamping: 9,
+  maxLean: 25, // degrees
+
+  // Height & bob
+  hipHeight: 0.93,
+  crouch: 0.06,
+  bobAmount: 0.035,
+
+  // Gait & feet
+  strideBase: 0.8,
+  strideScale: 0.25,
+  dutyWalk: 0.62,
+  dutyRun: 0.42,
+  stepHeight: 0.14,
+  footSpread: 0.11,
+  footLead: 1.0,
+  settleSpeed: 1.2,
+  settleDistance: 0.1,
+
+  // Hands & gun
+  handStiffness: 500,
+  handDampingRatio: 1.0,
+  handMaxAccel: 120,
+  contactTolerance: 0.02,
+  gunRight: 0.08,
+  gunUp: -0.04,
+  gunFwd: 0.36,
+  roundShoulders: 0.03,
+
+  // Weapon & recoil
+  fireRate: 600, // rounds per minute
+  magSize: 30,
+  autoReload: true,
+  spread: 1.0, // degrees of random cone
+  recoilKick: 1.4, // backward velocity impulse per shot (m/s)
+  recoilClimb: 7, // muzzle-up angular impulse per shot (rad/s)
+  recoilYaw: 2.5, // random sideways angular impulse (rad/s)
+  recoilStiffness: 260,
+  recoilDampingRatio: 0.75, // < 1 lets the gun bounce a little on return
+  maxClimb: 30, // degrees
+  torsoKick: 0.5, // how hard each shot rocks the upper body back
+  cameraShake: 0.06,
+  bulletDamage: 34,
+  headshotMultiplier: 3,
+};
+
+// Zombies share the humanoid body system, tuned slow, loose and broken.
+export const ZOMBIE_DEFAULTS = {
+  count: 8,
+  wanderSpeed: 0.45,
+  chaseSpeed: 1.25,
+  turnRate: 3,
+  detectRange: 11,
+  hearingRange: 25,
+  attackRange: 0.75,
+  health: 100,
+  hitShove: 2.2,
+  corpseTime: 30,
+
+  limp: 0.6,
+  hunch: 20, // degrees
+  armReach: 0.45,
+
+  // Humanoid body levers (same meaning as the player's).
+  runSpeed: 1.6,
+  acceleration: 4,
+  maxHipOffset: 30,
+  hipTurnRate: 4,
+  pelvisTwistShare: 0.4,
+  leanAccel: 0.03,
+  leanSpeed: 0.05,
+  leanStiffness: 30,
+  leanDamping: 5,
+  maxLean: 40,
+  hipHeight: 0.88,
+  crouch: 0.03,
+  bobAmount: 0.05,
+  strideBase: 0.7,
+  strideScale: 0.2,
+  dutyWalk: 0.66,
+  dutyRun: 0.56,
+  stepHeight: 0.08,
+  footSpread: 0.13,
+  footLead: 1.0,
+  settleSpeed: 0.8,
+  settleDistance: 0.15,
+  handStiffness: 60,
+  handDampingRatio: 0.45,
+  handMaxAccel: 30,
+  roundShoulders: 0.07,
+};
+
+const TRANSIENT = ['paused', 'slowMo'];
+
+export function pickKnown(source, defaults = DEFAULTS) {
+  const out = {};
+  for (const key of Object.keys(defaults)) {
+    if (key in source && typeof source[key] === typeof defaults[key]) out[key] = source[key];
+  }
+  return out;
+}
+
+export function loadParams(defaults = DEFAULTS, key = 'procedural-shooter.params.v1') {
+  const params = { ...defaults };
+  try {
+    const saved = localStorage.getItem(key);
+    if (saved) Object.assign(params, pickKnown(JSON.parse(saved), defaults));
+  } catch {
+    // Storage unavailable or corrupt: fall back to defaults.
+  }
+  for (const k of TRANSIENT) if (k in defaults) params[k] = defaults[k];
+  return params;
+}
+
+export const ZOMBIE_KEY = 'procedural-shooter.zombie.v1';
+
+export function saveParams(params, key = 'procedural-shooter.params.v1') {
+  try {
+    localStorage.setItem(key, JSON.stringify(params));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function resetParams(params, defaults = DEFAULTS) {
+  Object.assign(params, defaults);
+}
