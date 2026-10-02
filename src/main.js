@@ -5,7 +5,7 @@ import { createPanel } from './panel.js';
 import { Effects } from './effects.js';
 import { Gore } from './gore.js';
 import { Grapple } from './grapple.js';
-import { loadParams, ZOMBIE_DEFAULTS, ZOMBIE_KEY } from './params.js';
+import { loadParams, ZOMBIE_DEFAULTS, ZOMBIE_KEY, VISIBILITY } from './params.js';
 import './style.css';
 
 const params = loadParams();
@@ -64,6 +64,28 @@ function applyEnvironment() {
   sun.color.set(night ? '#8fa6d6' : '#ffffff');
   nearGlow.intensity = night ? params.nearGlow : 0;
   grid.visible = !night;
+  renderer.toneMappingExposure = params.exposure;
+  for (const b of visibilityButtons.children) b.classList.toggle('on', b.textContent === params.visibility);
+}
+
+// Visibility presets: buttons top-left, V cycles through them.
+const visibilityButtons = document.getElementById('visibility');
+for (const name of Object.keys(VISIBILITY)) {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.textContent = name;
+  b.addEventListener('click', () => setVisibility(name));
+  visibilityButtons.append(b);
+}
+function setVisibility(name) {
+  Object.assign(params, VISIBILITY[name]);
+  params.visibility = name;
+  applyEnvironment();
+}
+function cycleVisibility() {
+  const names = Object.keys(VISIBILITY);
+  setVisibility(names[(names.indexOf(params.visibility) + 1) % names.length]);
+  showToast(`Visibility: ${params.visibility}`);
 }
 applyEnvironment();
 
@@ -172,6 +194,7 @@ createPanel(params, zparams, player, {
   onSpawn: spawnZombies,
   onFullscreen: () => enterFullscreen(),
   onEnvironment: applyEnvironment,
+  onVisibility: setVisibility,
 });
 
 // A shot hits whichever is nearest along the ray: a crate or a zombie.
@@ -299,6 +322,7 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'KeyT') params.slowMo = !params.slowMo;
   if (e.code === 'KeyP') params.paused = !params.paused;
   if (e.code === 'KeyF') player.toggleFlashlight();
+  if (e.code === 'KeyV') cycleVisibility();
   if (e.code === 'KeyB') setSkeleton(!params.showSkeleton);
 });
 window.addEventListener('keyup', (e) => keys.delete(e.code));

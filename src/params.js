@@ -69,12 +69,14 @@ export const DEFAULTS = {
   bulletDamage: 34,
   headshotMultiplier: 3,
 
-  // Night
-  night: true,
-  ambientLight: 0.06, // overall sky light at night
-  moonLight: 0.35,
-  nearGlow: 1.6, // faint light around the player so you can see your footing
-  fogRange: 13, // metres past the player before the fog swallows everything
+  // Night (a visibility preset fills these in; the panel can fine-tune them)
+  visibility: 'Day',
+  night: false,
+  ambientLight: 0.22, // overall sky light at night
+  moonLight: 0.9,
+  nearGlow: 2.5, // light around the player so you can see your footing
+  fogRange: 20, // metres past the player before the fog swallows everything
+  exposure: 1.0,
 
   // Flashlight (mounted under the barrel)
   flashlightOn: true,
@@ -138,6 +140,15 @@ export const ZOMBIE_DEFAULTS = {
   handDampingRatio: 0.45,
   handMaxAccel: 30,
   roundShoulders: 0.07,
+};
+
+// How much you can see. Dark is the intended horror; the rest trade tension
+// for readability.
+export const VISIBILITY = {
+  Dark: { night: true, ambientLight: 0.06, moonLight: 0.35, nearGlow: 1.6, fogRange: 13, exposure: 1.0 },
+  Normal: { night: true, ambientLight: 0.22, moonLight: 0.9, nearGlow: 2.5, fogRange: 20, exposure: 1.25 },
+  Bright: { night: true, ambientLight: 0.55, moonLight: 1.7, nearGlow: 3, fogRange: 32, exposure: 1.5 },
+  Day: { night: false, exposure: 1.0 },
 };
 
 const TRANSIENT = ['paused', 'slowMo'];

@@ -7,7 +7,10 @@
   </head>
   <body>
     <div id="title">RIGOR <span>· prototype · one night, one street</span></div>
-    <button id="fullscreen" type="button">Fullscreen</button>
+    <div id="topbar">
+      <button id="fullscreen" type="button">Fullscreen</button>
+      <div id="visibility" title="Visibility (V)"></div>
+    </div>
     <div id="toast" hidden></div>
     <div id="health"><div id="health-fill"></div></div>
     <div id="hurt"></div>
@@ -25,7 +28,7 @@
       <pre id="stats"></pre>
       <div class="keys">
         <b>WASD</b> move · <b>Mouse</b> aim · <b>LMB</b> fire · <b>Shift</b> sprint · <b>Ctrl</b> walk · <b>R</b> reload · <b>Space</b> struggle · <b>N</b> spawn zombies · <b>T</b> slow-mo ·
-        <b>P</b> pause · <b>B</b> skeleton · <b>F</b> flashlight · <b>Wheel</b> zoom
+        <b>P</b> pause · <b>B</b> skeleton · <b>F</b> flashlight · <b>V</b> visibility · <b>Wheel</b> zoom
       </div>
     </div>
     <script type="module" src="/src/main.js"></script>

@@ -1,7 +1,7 @@
 import GUI from 'lil-gui';
-import { DEFAULTS, ZOMBIE_DEFAULTS, ZOMBIE_KEY, saveParams, resetParams, pickKnown } from './params.js';
+import { DEFAULTS, ZOMBIE_DEFAULTS, ZOMBIE_KEY, VISIBILITY, saveParams, resetParams, pickKnown } from './params.js';
 
-export function createPanel(params, zparams, player, { onSkeleton, onSpawn, onFullscreen, onEnvironment }) {
+export function createPanel(params, zparams, player, { onSkeleton, onSpawn, onFullscreen, onEnvironment, onVisibility }) {
   const gui = new GUI({ title: 'Levers' });
   const refresh = () => gui.controllersRecursive().forEach((c) => c.updateDisplay());
 
@@ -18,11 +18,13 @@ export function createPanel(params, zparams, player, { onSkeleton, onSpawn, onFu
   actions.add(player.reload, 'label').name('Stage').listen().disable();
 
   const night = gui.addFolder('Night & flashlight').close();
-  night.add(params, 'night').name('Night').onChange(onEnvironment);
-  night.add(params, 'ambientLight', 0, 1, 0.01).name('Sky light').onChange(onEnvironment);
-  night.add(params, 'moonLight', 0, 2, 0.05).name('Moonlight').onChange(onEnvironment);
-  night.add(params, 'nearGlow', 0, 3, 0.05).name('Glow around you').onChange(onEnvironment);
-  night.add(params, 'fogRange', 3, 40, 0.5).name('Fog distance');
+  night.add(params, 'visibility', Object.keys(VISIBILITY)).name('Visibility (V)').listen().onChange(onVisibility);
+  night.add(params, 'exposure', 0.3, 3, 0.05).name('Exposure').listen().onChange(onEnvironment);
+  night.add(params, 'night').name('Night').listen().onChange(onEnvironment);
+  night.add(params, 'ambientLight', 0, 1, 0.01).name('Sky light').listen().onChange(onEnvironment);
+  night.add(params, 'moonLight', 0, 3, 0.05).name('Moonlight').listen().onChange(onEnvironment);
+  night.add(params, 'nearGlow', 0, 5, 0.05).name('Glow around you').listen().onChange(onEnvironment);
+  night.add(params, 'fogRange', 3, 60, 0.5).name('Fog distance').listen();
   night.add(params, 'flashlightOn').name('Flashlight (F)').listen();
   night.add(params, 'flashIntensity', 0, 300, 5).name('Flashlight power');
   night.add(params, 'flashAngle', 5, 50, 1).name('Beam angle °');
