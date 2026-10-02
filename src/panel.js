@@ -33,6 +33,17 @@ export function createPanel(params, zparams, player, { onSkeleton, onSpawn, onFu
   zombies.add(zparams, 'handDampingRatio', 0.1, 2, 0.05).name('Arm damping');
   zombies.add(zparams, 'stepHeight', 0, 0.25, 0.005).name('Step height');
 
+  const grab = gui.addFolder('Grab & struggle').close();
+  grab.add(params, 'maxHealth', 10, 500, 5).name('Player health');
+  grab.add(params, 'struggleGain', 0.02, 0.5, 0.01).name('Per Space press');
+  grab.add(params, 'struggleDecay', 0, 1.5, 0.05).name('Meter decay /s');
+  grab.add(params, 'biteTime', 0.5, 6, 0.1).name('Time to bite (s)');
+  grab.add(params, 'biteDamage', 1, 100, 1).name('Bite damage');
+  grab.add(params, 'graceTime', 0, 4, 0.1).name('Grace after escape');
+  grab.add(params, 'breakFreeShove', 0, 8, 0.1).name('Break-free shove');
+  grab.add(zparams, 'attackRange', 0.4, 1.5, 0.05).name('Zombie grab range');
+  grab.add(zparams, 'grabWindup', 0.05, 1.5, 0.05).name('Zombie lunge time');
+
   const move = gui.addFolder('Movement').close();
   move.add(params, 'runSpeed', 1, 8, 0.1).name('Sprint speed (Shift)');
   move.add(params, 'jogSpeed', 0.5, 6, 0.1).name('Normal speed');

@@ -3,6 +3,8 @@ import { Player } from './player.js';
 import { Zombie } from './zombie.js';
 import { createPanel } from './panel.js';
 import { Effects } from './effects.js';
+import { Gore } from './gore.js';
+import { Grapple } from './grapple.js';
 import { loadParams, ZOMBIE_DEFAULTS, ZOMBIE_KEY } from './params.js';
 import './style.css';
 
@@ -81,6 +83,38 @@ function insideCrate(x, z, margin) {
 
 const player = new Player(scene, params);
 const effects = new Effects(scene, obstacles);
+const gore = new Gore(scene);
+
+// Feedback for the grab loop: red flash on bites, slow motion on death.
+let hurtFlash = 0;
+let deathSlow = 0;
+const grapple = new Grapple(player, gore, params, {
+  onBite: () => {
+    hurtFlash = 1;
+    shake = params.cameraShake * 5;
+  },
+  onBreakFree: () => {
+    shake = params.cameraShake * 2;
+  },
+  onDeath: (mode) => {
+    hurtFlash = 1;
+    shake = params.cameraShake * 6;
+    deathSlow = 1.6;
+    document.getElementById('dead-sub').textContent =
+      mode === 'halves' ? 'Torn in half.' : 'They took your arm.';
+    setTimeout(() => (document.getElementById('dead').hidden = false), 900);
+  },
+});
+
+function restart() {
+  gore.clear();
+  grapple.reset();
+  player.reset();
+  setSkeleton(params.showSkeleton);
+  kills = 0;
+  document.getElementById('dead').hidden = true;
+  spawnZombies();
+}
 
 // ---------------------------------------------------------------- zombies
 
@@ -136,6 +170,8 @@ player.onShot = (muzzle, dir) => {
   }
   effects.shot(muzzle, dir, distance, kind);
   if (target) {
+    const hitPoint = muzzle.clone().addScaledVector(dir, distance);
+    gore.spray(hitPoint, dir, headshot ? 24 : 10, headshot ? 3.5 : 2.5);
     const wasDead = target.dead;
     target.takeHit(dir, params.bulletDamage * (headshot ? params.headshotMultiplier : 1));
     if (!wasDead && target.dead) kills++;
@@ -149,14 +185,16 @@ player.onShot = (muzzle, dir) => {
 
 function updateWorld(dt, input) {
   player.update(dt, input);
-  const world = { player, zombies };
+  const world = { player, zombies, grapple };
   for (const z of zombies) z.update(dt, world);
 
   // Bodies can't overlap crates, and the living can't walk through each other.
-  collideWithCrates(player.pos, 0.3);
+  if (player.state !== 'dead') collideWithCrates(player.pos, 0.3);
   for (const z of zombies) {
     if (z.dead) continue;
     collideWithCrates(z.pos, 0.3);
+    // Grabbers and feeders are meant to be up close.
+    if (player.state !== 'normal' || z.state === 'grab') continue;
     const dx = player.pos.x - z.pos.x;
     const dz = player.pos.z - z.pos.z;
     const d = Math.hypot(dx, dz);
@@ -220,6 +258,7 @@ function showToast(text) {
   toastTimer = setTimeout(() => (toast.hidden = true), 4000);
 }
 let warnedAboutCtrl = false;
+let strugglePresses = 0; // Space presses since last frame
 
 window.addEventListener('keydown', (e) => {
   if (e.target instanceof HTMLInputElement) return;
@@ -231,6 +270,8 @@ window.addEventListener('keydown', (e) => {
     showToast('Ctrl+W can close the tab outside fullscreen. Click "Fullscreen" (top left) to lock keys.');
   }
   if (e.repeat) return;
+  if (e.code === 'Space' || e.code === 'KeyE') strugglePresses++;
+  if (e.code === 'Enter' && player.state === 'dead') restart();
   if (e.code === 'KeyR') player.startReload();
   if (e.code === 'KeyN') spawnZombies();
   if (e.code === 'KeyT') params.slowMo = !params.slowMo;
@@ -298,11 +339,16 @@ function readInput() {
 const camTarget = new THREE.Vector3();
 const camGoal = new THREE.Vector3();
 const camPos = new THREE.Vector3();
+let camZoom = 1;
 function updateCamera(dt, snap = false) {
-  camGoal.copy(player.pos).add(new THREE.Vector3(0, 1, 0));
+  camGoal.copy(player.state === 'dead' ? player.deathPos : player.pos).add(new THREE.Vector3(0, 1, 0));
   const k = snap ? 1 : 1 - Math.exp(-8 * dt);
   camTarget.lerp(camGoal, k);
-  camPos.set(camTarget.x, camTarget.y + camDist * 0.82, camTarget.z - camDist * 0.57);
+  // Push in close while grabbed or dead.
+  const zoomGoal = player.state === 'normal' ? 1 : player.state === 'grabbed' ? 0.6 : 0.5;
+  camZoom += (zoomGoal - camZoom) * (1 - Math.exp(-4 * dt));
+  const dist = camDist * camZoom;
+  camPos.set(camTarget.x, camTarget.y + dist * 0.82, camTarget.z - dist * 0.57);
   camera.position.lerp(camPos, k);
   camera.lookAt(camTarget);
   if (shake > 0) {
@@ -322,23 +368,48 @@ window.addEventListener('resize', () => {
 });
 
 const stats = document.getElementById('stats');
+const ui = {
+  health: document.getElementById('health-fill'),
+  hurt: document.getElementById('hurt'),
+  struggle: document.getElementById('struggle'),
+  struggleFill: document.getElementById('struggle-fill'),
+  biteFill: document.getElementById('bite-fill'),
+};
 const timer = new THREE.Timer();
 timer.connect(document);
 const STEP = 1 / 120;
 let hudTimer = 0;
 
+function updateUI(real) {
+  ui.health.style.width = `${Math.max(player.health / params.maxHealth, 0) * 100}%`;
+  hurtFlash = Math.max(hurtFlash - real * 1.5, 0);
+  const lowHealth = player.state !== 'dead' && player.health < params.maxHealth * 0.35 ? 0.35 : 0;
+  ui.hurt.style.opacity = Math.max(hurtFlash, lowHealth);
+  ui.struggle.hidden = !grapple.active;
+  if (grapple.active) {
+    ui.struggleFill.style.width = `${grapple.struggle * 100}%`;
+    ui.biteFill.style.width = `${grapple.biteProgress * 100}%`;
+  }
+}
+
 function frame(timestamp) {
   requestAnimationFrame(frame);
   timer.update(timestamp);
   const real = Math.min(timer.getDelta(), 0.1);
-  const dt = params.paused ? 0 : real * params.timeScale * (params.slowMo ? 0.25 : 1);
+  deathSlow = Math.max(deathSlow - real, 0);
+  const slow = (params.slowMo ? 0.25 : 1) * (deathSlow > 0 ? 0.3 : 1);
+  const dt = params.paused ? 0 : real * params.timeScale * slow;
 
   const input = readInput();
   const steps = Math.ceil(dt / STEP);
   for (let i = 0; i < steps; i++) updateWorld(dt / steps, input);
+  grapple.update(dt, params.paused ? 0 : strugglePresses);
+  strugglePresses = 0;
   effects.update(dt);
+  gore.update(dt);
 
   updateCamera(real);
+  updateUI(real);
 
   hudTimer -= real;
   if (hudTimer <= 0) {
@@ -352,3 +423,8 @@ function frame(timestamp) {
   renderer.render(scene, camera);
 }
 requestAnimationFrame(frame);
+
+// Dev-only handle for poking at the game from the browser console.
+if (import.meta.env.DEV) {
+  window.__rigor = { player, grapple, gore, params, zparams, restart, get zombies() { return zombies; } };
+}

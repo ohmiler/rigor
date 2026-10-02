@@ -58,6 +58,7 @@ export class Humanoid {
     this.roll = 0;
     // Constant body attitude on top of the physics (a zombie's hunch, a head tilt).
     this.posture = { pitch: 0, roll: 0, headPitch: 0, headRoll: 0 };
+    this.heightOffset = 0; // negative crouches; IK bends the knees to match
 
     this.phase = 0;
     this.duty = params.dutyWalk;
@@ -232,6 +233,12 @@ export class Humanoid {
 
   // ---------------------------------------------------------------- motion
 
+  // Shove the torso spring along a ground direction (struggles, bites, hits).
+  jolt(dir, amount) {
+    this.leanVel.x += dir.x * amount;
+    this.leanVel.y += dir.z * amount;
+  }
+
   // Move toward a desired velocity with an acceleration cap.
   _locomote(dt, desired) {
     _v2.subVectors(desired, this.vel);
@@ -362,7 +369,7 @@ export class Humanoid {
     const roll = this.roll + pose.roll;
 
     const bob = p.bobAmount * speedF * (0.5 + 0.5 * Math.cos(this.phase * Math.PI * 4));
-    this.pelvisPos.set(this.pos.x, p.hipHeight - p.crouch * speedF - bob, this.pos.z);
+    this.pelvisPos.set(this.pos.x, p.hipHeight - p.crouch * speedF - bob + this.heightOffset, this.pos.z);
     quatFrom(this.pelvisQuat, pitch * 0.35, this.pelvisYaw, roll * 0.35);
     quatFrom(this.chestQuat, pitch, this.chestYaw, roll);
     localPoint(_v1, this.pelvisPos, this.pelvisQuat, 0, 0.08, 0);

@@ -87,16 +87,51 @@ export class Zombie extends Humanoid {
     this.time += dt;
     this.player = world.player;
 
-    _v1.subVectors(world.player.pos, this.pos);
+    const player = world.player;
+    const grapple = world.grapple;
+    this.grabCooldown = Math.max((this.grabCooldown ?? 0) - dt, 0);
+
+    _v1.subVectors(player.state === 'dead' ? player.deathPos : player.pos, this.pos);
     _v1.y = 0;
     const dist = _v1.length();
     if (this.state === 'wander' && dist < p.detectRange) this.state = 'chase';
+    if (player.state === 'dead' && (this.state === 'chase' || this.state === 'lunge' || this.state === 'grab')) {
+      this.state = 'feed';
+    }
 
     _desired.set(0, 0, 0);
     let faceYaw = this.aimYaw;
+    let crouch = 0;
     if (this.state === 'chase') {
       faceYaw = Math.atan2(_v1.x, _v1.z);
       if (dist > p.attackRange) _desired.copy(_v1).setLength(p.chaseSpeed * this.quirk.speed);
+      // Close enough: wind up a lunge.
+      if (dist < p.attackRange + 0.2 && this.stagger <= 0 && this.grabCooldown <= 0 && grapple.canGrab()) {
+        this.state = 'lunge';
+        this.lungeT = 0;
+        this.jolt(_v2.copy(_v1).normalize(), 2.5);
+      }
+    } else if (this.state === 'lunge') {
+      faceYaw = Math.atan2(_v1.x, _v1.z);
+      _desired.copy(_v1).setLength(p.chaseSpeed * 1.8);
+      this.lungeT += dt;
+      if (this.lungeT >= p.grabWindup) {
+        // Only connects if you're still in reach when the lunge lands.
+        if (!(dist < p.attackRange + 0.35 && grapple.grab(this))) {
+          this.state = 'chase';
+          this.grabCooldown = 1;
+        }
+      }
+    } else if (this.state === 'grab') {
+      faceYaw = Math.atan2(_v1.x, _v1.z);
+      // Hang on at arm's length, pulling in close.
+      _v2.copy(_v1).setLength(dist - 0.5);
+      _desired.copy(_v2).multiplyScalar(6);
+      if (Math.random() < dt * 1.5) this.jolt(_v2.copy(_v1).normalize(), 1.6); // gnashing lunges
+    } else if (this.state === 'feed') {
+      faceYaw = Math.atan2(_v1.x, _v1.z);
+      if (dist > 0.75) _desired.copy(_v1).setLength(p.chaseSpeed * this.quirk.speed);
+      else crouch = -0.33; // kneel over the body
     } else {
       this.wanderTimer -= dt;
       _v2.subVectors(this.wanderTarget, this.pos);
@@ -132,7 +167,9 @@ export class Zombie extends Humanoid {
     const q = this.quirk;
     const bad = this.feet[q.limpSide < 0 ? 0 : 1];
     const dip = bad.planted && this.speed > 0.1 ? Math.sin(bad.progress * Math.PI) : 0;
-    this.posture.pitch = p.hunch * DEG * q.hunch + Math.sin(this.time * 1.3 + q.seed) * 0.04;
+    this.heightOffset = damp(this.heightOffset, crouch, 4, dt);
+    const feeding = crouch < 0 ? 0.5 : 0;
+    this.posture.pitch = p.hunch * DEG * q.hunch + feeding + Math.sin(this.time * 1.3 + q.seed) * 0.04;
     this.posture.roll = -q.limpSide * dip * q.limp * p.limp * 0.18;
     this.posture.headPitch = -this.posture.pitch * 0.7;
     this.posture.headRoll = q.headTilt;
@@ -146,10 +183,30 @@ export class Zombie extends Humanoid {
   _setHandTargets(dt) {
     const p = this.params;
     const q = this.quirk;
-    const chasing = this.state === 'chase' && this.stagger <= 0;
+    const player = this.player;
+
+    if (this.state === 'grab' && player) {
+      // Clamp onto the player's shoulders (crossed: our left takes their right).
+      this.hands.left.target.copy(player.arms[1].shoulder);
+      this.hands.right.target.copy(player.arms[0].shoulder);
+      return;
+    }
+    if (this.state === 'feed' && player && this.heightOffset < -0.15) {
+      // Tearing at the body on the ground.
+      for (const [i, hand] of [this.hands.left, this.hands.right].entries()) {
+        const tug = Math.sin(this.time * 9 + i * Math.PI + q.seed);
+        hand.target.lerpVectors(this.chestPos, player.deathPos, 0.8);
+        hand.target.y = 0.12 + Math.max(tug, 0) * 0.25;
+        hand.target.x += (i ? 0.12 : -0.12) * Math.cos(this.aimYaw);
+        hand.target.z -= (i ? 0.12 : -0.12) * Math.sin(this.aimYaw);
+      }
+      return;
+    }
+
+    const chasing = (this.state === 'chase' || this.state === 'lunge' || this.state === 'feed') && this.stagger <= 0;
     this.reach = damp(this.reach, chasing ? 1 : 0.15, 3, dt || 0);
 
-    const near = this.player && this.player.pos.distanceTo(this.pos) < 1.3;
+    const near = player && player.state !== 'dead' && player.pos.distanceTo(this.pos) < 1.3;
     for (const [i, hand] of [this.hands.left, this.hands.right].entries()) {
       const side = i === 0 ? -1 : 1;
       const sway = Math.sin(this.time * 2.1 + q.seed + i * 1.7) * 0.05;
@@ -157,7 +214,7 @@ export class Zombie extends Humanoid {
       localPoint(_v1, this.chestPos, this.chestQuat, side * 0.22, -0.48, 0.06 + sway);
       // Reaching: forward at shoulder height, each arm a bit different.
       localPoint(_v2, this.chestPos, this.chestQuat, side * 0.14, 0.02 + sway * q.armLift[i], p.armReach * q.armLift[i]);
-      if (near && chasing) _v2.lerp(this.player.chestPos, 0.6);
+      if (near && chasing) _v2.lerp(player.chestPos, 0.6);
       hand.target.lerpVectors(_v1, _v2, this.reach);
     }
   }
@@ -195,7 +252,16 @@ export class Zombie extends Humanoid {
   }
 
   alert() {
-    if (!this.dead) this.state = 'chase';
+    if (!this.dead && this.state === 'wander') this.state = 'chase';
+  }
+
+  // Thrown off when the player breaks free.
+  shove(dir, strength) {
+    this.state = 'chase';
+    this.stagger = 1.4;
+    this.grabCooldown = 2.5;
+    this.jolt(dir, strength);
+    this.vel.addScaledVector(dir, strength * 0.7);
   }
 
   _die(dir) {

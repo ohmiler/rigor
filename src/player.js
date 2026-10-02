@@ -47,7 +47,34 @@ export class Player extends Humanoid {
     this.onShot = null; // (muzzle: Vector3, dir: Vector3) => void
     this.moveMode = 'jog';
 
+    this.health = params.maxHealth;
+    this.state = 'normal'; // 'normal' | 'grabbed' | 'dead'
+    this.grabbedBy = null;
+    this.deathPos = new THREE.Vector3();
+
     this._buildGun();
+    this._settle();
+  }
+
+  // Fresh body at the origin (the old one may be in pieces).
+  reset() {
+    this.dispose();
+    for (const d of this.drops) this.body.remove(d.mesh);
+    this.drops = [];
+    this._buildBody(PLAYER_LOOK);
+    this._buildGun();
+    this.pos.set(0, 0, 0);
+    this.vel.set(0, 0, 0);
+    this.accel.set(0, 0, 0);
+    this.lean.set(0, 0);
+    this.leanVel.set(0, 0);
+    Object.assign(this.recoil, { back: 0, backVel: 0, pitch: 0, pitchVel: 0, yaw: 0, yawVel: 0 });
+    Object.assign(this.reload, { active: false, step: -1, t: 0, label: 'Ready' });
+    this.magState = 'gun';
+    this.ammo = this.params.magSize;
+    this.health = this.params.maxHealth;
+    this.state = 'normal';
+    this.grabbedBy = null;
     this._settle();
   }
 
@@ -80,16 +107,25 @@ export class Player extends Humanoid {
 
   update(dt, input) {
     const p = this.params;
+    if (this.state === 'dead') {
+      this._updateDrops(dt);
+      return;
+    }
+    const grabbed = this.state === 'grabbed' && this.grabbedBy;
 
     _v1.set(input.x, 0, input.z);
     if (_v1.lengthSq() > 1) _v1.normalize();
     // Ctrl (walk) wins over Shift (sprint) so a careful player is never surprised.
     this.moveMode = input.walk ? 'walk' : input.sprint ? 'sprint' : 'jog';
     const topSpeed = { walk: p.walkSpeed, jog: p.jogSpeed, sprint: p.runSpeed }[this.moveMode];
-    this._locomote(dt, _v1.multiplyScalar(topSpeed));
+    // Held in place while grabbed.
+    this._locomote(dt, grabbed ? _v1.set(0, 0, 0) : _v1.multiplyScalar(topSpeed));
 
     let aimTarget = this.aimYaw;
-    if (p.faceMouse && input.aimPoint) {
+    if (grabbed) {
+      // Face whoever has hold of you.
+      aimTarget = Math.atan2(this.grabbedBy.pos.x - this.pos.x, this.grabbedBy.pos.z - this.pos.z);
+    } else if (p.faceMouse && input.aimPoint) {
       const dx = input.aimPoint.x - this.pos.x;
       const dz = input.aimPoint.z - this.pos.z;
       if (dx * dx + dz * dz > 0.16) aimTarget = Math.atan2(dx, dz);
@@ -99,12 +135,76 @@ export class Player extends Humanoid {
     this.aimYaw = dampAngle(this.aimYaw, aimTarget, p.aimTurnRate, dt);
     this.chestYawOffset = p.gunLead * DEG;
 
-    this._updateFiring(dt, input.fire);
+    this._updateFiring(dt, input.fire && !grabbed);
     this._updateRecoil(dt);
     this._updateBody(dt);
     this._updateReload(dt);
     this._updateDrops(dt);
     this._poseBody(dt);
+  }
+
+  // ---------------------------------------------------------------- death
+
+  /**
+   * Torn apart. 'arms': one zombie rips off the arm nearest it and the body
+   * topples away. 'halves': two or more pull the torso off the legs, each
+   * half going toward the zombie that had it. `pulls` are ground directions
+   * from the player toward each grabber.
+   */
+  die(mode, pulls, gore) {
+    this.state = 'dead';
+    this.grabbedBy = null;
+    this.reload.active = false;
+    this.deathPos.copy(this.pos);
+    for (const m of this.markers) m.visible = false;
+    if (this.magState !== 'gun') this.mag.visible = false;
+
+    const up = new THREE.Vector3(0, 1, 0);
+    const deg = Math.PI / 180;
+    const armParts = (a) => [a.upper.mesh, a.fore.mesh, a.hand];
+    const upperParts = [this.chest, this.head, this.abdomen, this.neck.mesh, this.gun, this.mag];
+    const lowerParts = [this.pelvis, ...this.legs.flatMap((l) => [l.thigh.mesh, l.shin.mesh, l.foot])];
+
+    if (mode === 'halves') {
+      const [pullA, pullB] = pulls;
+      const waist = localPoint(new THREE.Vector3(), this.pelvisPos, this.pelvisQuat, 0, 0.1, 0);
+      const top = gore.tear([...upperParts, ...this.arms.flatMap(armParts)], waist, {
+        vel: pullA.clone().multiplyScalar(3.2).add(new THREE.Vector3(0, 2.2, 0)),
+        angVel: new THREE.Vector3().crossVectors(up, pullA).multiplyScalar(7),
+        rest: 0.13,
+      });
+      const legs = gore.tear(lowerParts, this.pos, {
+        topple: { axis: new THREE.Vector3().crossVectors(up, pullB).normalize(), maxAngle: 85 * deg, duration: 0.8 },
+      });
+      gore.spray(waist, up, 50, 3);
+      gore.spray(waist, up.clone().negate(), 40, 2);
+      gore.wound(waist, new THREE.Vector3(0, -1, 0), { gib: top, rate: 140, duration: 4 });
+      gore.wound(waist, up, { gib: legs, rate: 110, duration: 4, speed: 1.6 });
+      gore.pool(this.pos, 1.1, 6);
+      gore.pool(this.pos.clone().addScaledVector(pullA, 1.4), 0.8, 6);
+    } else {
+      const pull = pulls[0];
+      // The arm on the side facing the zombie is the one it gets hold of.
+      const torn = this.arms.reduce((best, a) =>
+        _v1.subVectors(a.shoulder, this.chestPos).dot(pull) > new THREE.Vector3().subVectors(best.shoulder, this.chestPos).dot(pull) ? a : best,
+      );
+      const kept = this.arms.find((a) => a !== torn);
+      const shoulder = torn.shoulder.clone();
+      const outward = shoulder.clone().sub(this.chestPos).setY(0.2).normalize();
+
+      const arm = gore.tear(armParts(torn), shoulder, {
+        vel: pull.clone().multiplyScalar(4).add(new THREE.Vector3(0, 2.5, 0)),
+        angVel: new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(24),
+        rest: 0.06,
+      });
+      const body = gore.tear([...upperParts, ...armParts(kept), ...lowerParts], this.pos, {
+        topple: { axis: new THREE.Vector3().crossVectors(up, pull).negate().normalize(), maxAngle: 86 * deg, duration: 0.85 },
+      });
+      gore.spray(shoulder, outward, 60, 3);
+      gore.wound(shoulder, outward, { gib: body, rate: 120, duration: 5 });
+      gore.wound(shoulder, outward.clone().negate(), { gib: arm, rate: 50, duration: 2.5, speed: 1.4 });
+      gore.pool(this.pos.clone().addScaledVector(pull, -0.9), 1.0, 6);
+    }
   }
 
   // ---------------------------------------------------------------- weapon
@@ -263,7 +363,10 @@ export class Player extends Humanoid {
   _setHandTargets() {
     const { left, right } = this.hands;
     localPoint(right.target, this.gunPos, this.gunQuat, ...GRIP);
-    if (this.reload.active) {
+    if (this.state === 'grabbed' && this.grabbedBy) {
+      // Free hand shoves against the zombie's chest.
+      left.target.lerpVectors(this.chestPos, this.grabbedBy.chestPos, 0.75);
+    } else if (this.reload.active) {
       const step = RELOAD_STEPS[this.reload.step];
       const [origin, quat] =
         step.frame === 'gun' ? [this.gunPos, this.gunQuat] : [this.pelvisPos, this.pelvisQuat];
@@ -306,6 +409,7 @@ export class Player extends Humanoid {
       `hand error  right ${cm(this.hands.right)} cm · left ${cm(this.hands.left)} cm`,
       `ammo ${this.ammo}/${p.magSize} · recoil back ${(this.recoil.back * 100).toFixed(1)} cm climb ${deg(this.recoil.pitch)}°`,
       `reload  ${this.reload.label}`,
+      `health ${Math.max(Math.round(this.health), 0)}/${p.maxHealth} · ${this.state}`,
     ].join('\n');
   }
 }

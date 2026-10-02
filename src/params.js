@@ -68,6 +68,15 @@ export const DEFAULTS = {
   cameraShake: 0.06,
   bulletDamage: 34,
   headshotMultiplier: 3,
+
+  // Grab & struggle
+  maxHealth: 100,
+  struggleGain: 0.11, // meter per Space press (split across grabbers)
+  struggleDecay: 0.3, // meter lost per second
+  biteTime: 2.2, // seconds until the first bite; each later bite comes 15% faster
+  biteDamage: 34,
+  graceTime: 1.2, // can't be grabbed again right after breaking free
+  breakFreeShove: 3.5,
 };
 
 // Zombies share the humanoid body system, tuned slow, loose and broken.
@@ -79,6 +88,7 @@ export const ZOMBIE_DEFAULTS = {
   detectRange: 11,
   hearingRange: 25,
   attackRange: 0.75,
+  grabWindup: 0.35, // lunge time before the grab connects: back off to dodge it
   health: 100,
   hitShove: 2.2,
   corpseTime: 30,
