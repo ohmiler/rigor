@@ -45,6 +45,7 @@ export class Player extends Humanoid {
     this.ammo = params.magSize;
     this.fireCooldown = 0;
     this.onShot = null; // (muzzle: Vector3, dir: Vector3) => void
+    this.moveMode = 'jog';
 
     this._buildGun();
     this._settle();
@@ -82,7 +83,10 @@ export class Player extends Humanoid {
 
     _v1.set(input.x, 0, input.z);
     if (_v1.lengthSq() > 1) _v1.normalize();
-    this._locomote(dt, _v1.multiplyScalar(input.walk ? p.walkSpeed : p.runSpeed));
+    // Ctrl (walk) wins over Shift (sprint) so a careful player is never surprised.
+    this.moveMode = input.walk ? 'walk' : input.sprint ? 'sprint' : 'jog';
+    const topSpeed = { walk: p.walkSpeed, jog: p.jogSpeed, sprint: p.runSpeed }[this.moveMode];
+    this._locomote(dt, _v1.multiplyScalar(topSpeed));
 
     let aimTarget = this.aimYaw;
     if (p.faceMouse && input.aimPoint) {
@@ -295,7 +299,7 @@ export class Player extends Humanoid {
       `${name} ${f.planted ? 'planted' : 'swing  '} ${String(Math.round(f.progress * 100)).padStart(3)}%`;
     const cm = (h) => (h.error * 100).toFixed(1);
     return [
-      `${this.speed.toFixed(2)} m/s · ${gait} · phase ${this.phase.toFixed(2)} · duty ${this.duty.toFixed(2)}`,
+      `${this.speed.toFixed(2)} m/s · ${this.moveMode} · ${gait} · phase ${this.phase.toFixed(2)} · duty ${this.duty.toFixed(2)}`,
       `lower body ${deg(wrapAngle(this.lowerYaw - this.aimYaw))}° from aim · waist twist ${deg(this.twist)}° · gun lead ${p.gunLead}°`,
       `lean fwd ${deg(this.pitch)}° side ${deg(this.roll)}°`,
       `${foot(this.feet[0], 'L')}   ${foot(this.feet[1], 'R')}`,

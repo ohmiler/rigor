@@ -7,8 +7,9 @@ export const DEFAULTS = {
   showSkeleton: false,
 
   // Movement
-  runSpeed: 4.0,
-  walkSpeed: 1.6,
+  runSpeed: 4.2, // Shift: sprint (also the top of the gait's speed range)
+  jogSpeed: 2.6, // default movement
+  walkSpeed: 1.3, // Ctrl: slow, careful walk
   acceleration: 14,
   aimTurnRate: 18,
   faceMouse: true,

@@ -112,7 +112,11 @@ function setSkeleton(on) {
 }
 setSkeleton(params.showSkeleton);
 
-createPanel(params, zparams, player, { onSkeleton: setSkeleton, onSpawn: spawnZombies });
+createPanel(params, zparams, player, {
+  onSkeleton: setSkeleton,
+  onSpawn: spawnZombies,
+  onFullscreen: () => enterFullscreen(),
+});
 
 // A shot hits whichever is nearest along the ray: a crate or a zombie.
 let shake = 0;
@@ -171,9 +175,61 @@ function updateWorld(dt, input) {
 // ---------------------------------------------------------------- input
 
 const keys = new Set();
+// Modifier state comes from the ctrlKey/shiftKey flags every key and mouse
+// event carries, so a keyup lost to a dialog or focus change can't leave
+// Ctrl "stuck" down.
+const mods = { ctrl: false, shift: false };
+const syncMods = (e) => {
+  mods.ctrl = e.ctrlKey;
+  mods.shift = e.shiftKey;
+};
+for (const type of ['keydown', 'keyup', 'pointermove', 'pointerdown', 'pointerup']) {
+  window.addEventListener(type, syncMods, true);
+}
+const ctrlHeld = () => mods.ctrl;
+const keysLocked = () => document.fullscreenElement && navigator.keyboard?.lock;
+
+// Ctrl is the walk key, but Ctrl+W/T/N are browser shortcuts a page can't
+// cancel. Fullscreen with the Keyboard Lock API (Chrome/Edge) captures them;
+// outside fullscreen a leave-page prompt is the safety net for Ctrl+W.
+async function enterFullscreen() {
+  try {
+    if (!document.fullscreenElement) await document.documentElement.requestFullscreen();
+    await navigator.keyboard?.lock?.();
+  } catch {
+    showToast('Fullscreen was blocked by the browser');
+  }
+}
+document.addEventListener('fullscreenchange', () => {
+  if (!document.fullscreenElement) navigator.keyboard?.unlock?.();
+  fullscreenButton.hidden = !!document.fullscreenElement;
+});
+window.addEventListener('beforeunload', (e) => {
+  if (ctrlHeld() && !keysLocked()) e.preventDefault();
+});
+
+const fullscreenButton = document.getElementById('fullscreen');
+fullscreenButton.addEventListener('click', enterFullscreen);
+
+const toast = document.getElementById('toast');
+let toastTimer = 0;
+function showToast(text) {
+  toast.textContent = text;
+  toast.hidden = false;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => (toast.hidden = true), 4000);
+}
+let warnedAboutCtrl = false;
+
 window.addEventListener('keydown', (e) => {
   if (e.target instanceof HTMLInputElement) return;
   keys.add(e.code);
+  // Stop the browser from acting on Ctrl+R, Ctrl+S, Ctrl+D... while walking.
+  if (e.ctrlKey && !e.code.startsWith('Control')) e.preventDefault();
+  if (e.code.startsWith('Control') && !keysLocked() && !warnedAboutCtrl) {
+    warnedAboutCtrl = true;
+    showToast('Ctrl+W can close the tab outside fullscreen. Click "Fullscreen" (top left) to lock keys.');
+  }
   if (e.repeat) return;
   if (e.code === 'KeyR') player.startReload();
   if (e.code === 'KeyN') spawnZombies();
@@ -183,7 +239,10 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'KeyB') setSkeleton(!params.showSkeleton);
 });
 window.addEventListener('keyup', (e) => keys.delete(e.code));
-window.addEventListener('blur', () => keys.clear());
+window.addEventListener('blur', () => {
+  keys.clear();
+  mods.ctrl = mods.shift = false;
+});
 
 const mouse = new THREE.Vector2();
 let hasMouse = false;
@@ -227,7 +286,8 @@ function readInput() {
   return {
     x: held('KeyA', 'ArrowLeft') - held('KeyD', 'ArrowRight'),
     z: held('KeyW', 'ArrowUp') - held('KeyS', 'ArrowDown'),
-    walk: keys.has('ShiftLeft') || keys.has('ShiftRight'),
+    walk: ctrlHeld(),
+    sprint: mods.shift,
     fire: triggerHeld,
     aimPoint,
   };

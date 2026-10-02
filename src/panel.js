@@ -1,7 +1,7 @@
 import GUI from 'lil-gui';
 import { DEFAULTS, ZOMBIE_DEFAULTS, ZOMBIE_KEY, saveParams, resetParams, pickKnown } from './params.js';
 
-export function createPanel(params, zparams, player, { onSkeleton, onSpawn }) {
+export function createPanel(params, zparams, player, { onSkeleton, onSpawn, onFullscreen }) {
   const gui = new GUI({ title: 'Levers' });
   const refresh = () => gui.controllersRecursive().forEach((c) => c.updateDisplay());
 
@@ -12,6 +12,7 @@ export function createPanel(params, zparams, player, { onSkeleton, onSpawn }) {
   play.add(params, 'showSkeleton').name('Skeleton (B)').listen().onChange(onSkeleton);
 
   const actions = gui.addFolder('Actions');
+  actions.add({ fullscreen: onFullscreen }, 'fullscreen').name('Fullscreen + lock keys');
   actions.add({ spawn: onSpawn }, 'spawn').name('Spawn zombies (N)');
   actions.add({ reload: () => player.startReload() }, 'reload').name('Reload (R)');
   actions.add(player.reload, 'label').name('Stage').listen().disable();
@@ -33,8 +34,9 @@ export function createPanel(params, zparams, player, { onSkeleton, onSpawn }) {
   zombies.add(zparams, 'stepHeight', 0, 0.25, 0.005).name('Step height');
 
   const move = gui.addFolder('Movement').close();
-  move.add(params, 'runSpeed', 1, 8, 0.1).name('Run speed');
-  move.add(params, 'walkSpeed', 0.5, 4, 0.1).name('Walk speed');
+  move.add(params, 'runSpeed', 1, 8, 0.1).name('Sprint speed (Shift)');
+  move.add(params, 'jogSpeed', 0.5, 6, 0.1).name('Normal speed');
+  move.add(params, 'walkSpeed', 0.3, 4, 0.1).name('Walk speed (Ctrl)');
   move.add(params, 'acceleration', 2, 40, 0.5).name('Acceleration');
   move.add(params, 'aimTurnRate', 2, 40, 0.5).name('Aim turn rate');
   move.add(params, 'faceMouse').name('Face mouse (F)').listen();
