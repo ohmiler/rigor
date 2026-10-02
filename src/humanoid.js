@@ -289,8 +289,8 @@ export class Humanoid {
    * traversal.js) place the hips, hands and feet relative to the real edge;
    * IK and the springs do the rest.
    */
-  startTraversal(ledge, { duration, bothHands = false }) {
-    this.traversal = new Traversal(ledge, this, { duration, bothHands });
+  startTraversal(ledge, { duration, bothHands = false, keys }) {
+    this.traversal = new Traversal(ledge, this, { duration, bothHands, keys });
     this.vy = 0;
     this.reach = 0;
   }

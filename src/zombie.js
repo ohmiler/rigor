@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { Humanoid } from './humanoid.js';
+import { traversalTiming } from './traversal.js';
 import { DEG, dampAngle, damp, localPoint } from './rig-utils.js';
 
 const _v1 = new THREE.Vector3();
@@ -123,8 +124,8 @@ export class Zombie extends Humanoid {
         if (this.climbTimer > p.climbDelay * this.quirk.climbDelay) {
           const ledge = Humanoid.terrain.findLedge(this.pos, _v2.copy(_v1).normalize());
           if (ledge?.type === 'climb') {
-            const rise = ledge.top - this.pos.y;
-            this.startTraversal(ledge, { duration: (0.85 + 0.4 * rise) * p.climbSlowness, bothHands: true });
+            const { duration } = traversalTiming(ledge, this.pos.y);
+            this.startTraversal(ledge, { duration: duration * p.climbSlowness, bothHands: true });
           }
           this.climbTimer = 0;
         }

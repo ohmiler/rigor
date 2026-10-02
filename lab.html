@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>RIGOR Lab</title>
+  </head>
+  <body>
+    <div id="title">RIGOR <b>LAB</b> <a href="/">← back to the game</a></div>
+    <div id="views">
+      <button data-view="side" type="button">Side</button>
+      <button data-view="front" type="button">Front</button>
+      <button data-view="back" type="button">Back</button>
+      <button data-view="game" type="button">Game camera</button>
+    </div>
+    <pre id="info"></pre>
+    <div id="timeline">
+      <button id="play" type="button" title="Play / pause (Space)">▶</button>
+      <button id="step-back" type="button" title="Back one frame (,)">◀|</button>
+      <button id="step-fwd" type="button" title="Forward one frame (.)">|▶</button>
+      <div id="track">
+        <div id="ticks"></div>
+        <input id="scrub" type="range" min="0" max="1000" step="1" value="0" />
+      </div>
+      <span id="readout">0%</span>
+      <select id="speed" title="Playback speed">
+        <option value="1">1×</option>
+        <option value="0.5">½×</option>
+        <option value="0.25" selected>¼×</option>
+        <option value="0.1">0.1×</option>
+      </select>
+      <label><input id="loop" type="checkbox" checked /> loop</label>
+    </div>
+    <script type="module" src="/src/lab/lab.js"></script>
+  </body>
+</html>

@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { Humanoid } from './humanoid.js';
+import { traversalTiming } from './traversal.js';
 import { DEG, wrapAngle, dampAngle, damp, localPoint, localDir, quatFrom } from './rig-utils.js';
 
 const _v1 = new THREE.Vector3();
@@ -219,10 +220,8 @@ export class Player extends Humanoid {
     const ledge = canParkour ? Humanoid.terrain.findLedge(this.pos, _v2) : null;
     this.parkourHint = ledge?.type ?? null;
     if (ledge && input.jump) {
-      const rise = ledge.top - this.pos.y;
       // Vault one-handed with the gun kept; climb with both hands, gun swung aside.
-      if (ledge.type === 'vault') this.startTraversal(ledge, { duration: 0.62 });
-      else this.startTraversal(ledge, { duration: 0.85 + 0.4 * rise, bothHands: true });
+      this.startTraversal(ledge, traversalTiming(ledge, this.pos.y));
       this.parkourHint = null;
       this._poseBody(dt);
       return;
