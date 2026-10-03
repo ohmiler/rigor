@@ -7,6 +7,8 @@ import { Ragdoll, RAGDOLL } from './ragdoll.js';
 const _v1 = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
 const _desired = new THREE.Vector3();
+const _route = new THREE.Vector3();
+const _wp = new THREE.Vector3();
 
 const pick = (list) => list[Math.floor(Math.random() * list.length)];
 const rand = (a, b) => a + Math.random() * (b - a);
@@ -149,6 +151,7 @@ export class Zombie extends Humanoid {
     this.onSever = null;
     this.voice = null; // main.js keeps its sound state here
     this._soaked = null; // blood-soaked copies of its materials
+    this._crawlTo = null; // where a crawler is hauling itself (round obstacles)
     this.crawlDelay = 0;
 
     this._applyLimp();
@@ -207,6 +210,17 @@ export class Zombie extends Humanoid {
 
   // ---------------------------------------------------------------- update
 
+  // The flat way to head for `target` from `from`: round cars and barriers
+  // when the world has a nav grid, else straight at it. Once it's as close
+  // as the grid gets it (under a car you're standing on), straight at it.
+  _routeTo(world, target, out, from = this.pos) {
+    if (world.nav?.steer(from, target, _wp)) {
+      out.subVectors(_wp, from).setY(0);
+      if (out.lengthSq() > 0.09) return out;
+    }
+    return out.subVectors(target, from).setY(0);
+  }
+
   update(dt, world) {
     if (this.ragdoll) {
       this._updateRagdoll(dt, world);
@@ -241,8 +255,9 @@ export class Zombie extends Humanoid {
     let crouch = 0;
     const level = Math.abs(player.pos.y - this.pos.y) < 0.4; // same height as the player
     if (this.state === 'chase') {
-      faceYaw = Math.atan2(_v1.x, _v1.z);
-      if (dist > p.attackRange) _desired.copy(_v1).setLength(p.chaseSpeed * this.quirk.speed * this.injurySpeed);
+      this._routeTo(world, player.pos, _route);
+      faceYaw = Math.atan2(_route.x, _route.z);
+      if (dist > p.attackRange) _desired.copy(_route).setLength(p.chaseSpeed * this.quirk.speed * this.injurySpeed);
 
       // Player is up on something: crowd below, and eventually clamber up after them.
       this.climbTimer = this.climbTimer ?? 0;
@@ -299,8 +314,9 @@ export class Zombie extends Humanoid {
       _desired.copy(_v2).multiplyScalar(6);
       if (Math.random() < dt * 1.5) this.jolt(_v2.copy(_v1).normalize(), 1.6); // gnashing lunges
     } else if (this.state === 'feed') {
-      faceYaw = Math.atan2(_v1.x, _v1.z);
-      if (dist > 0.75) _desired.copy(_v1).setLength(p.chaseSpeed * this.quirk.speed * this.injurySpeed);
+      this._routeTo(world, player.deathPos, _route);
+      faceYaw = Math.atan2(_route.x, _route.z);
+      if (dist > 0.75) _desired.copy(_route).setLength(p.chaseSpeed * this.quirk.speed * this.injurySpeed);
       else crouch = -0.33; // kneel over the body
     } else if (this.state === 'investigate') {
       // Off to see what made that noise, a bit quicker than a wander; once
@@ -308,8 +324,9 @@ export class Zombie extends Humanoid {
       _v2.subVectors(this.noiseAt, this.pos);
       _v2.y = 0;
       if (_v2.length() > 0.8) {
-        _desired.copy(_v2).setLength(p.wanderSpeed * 2 * this.quirk.speed * this.injurySpeed);
-        faceYaw = Math.atan2(_v2.x, _v2.z);
+        this._routeTo(world, this.noiseAt, _route);
+        _desired.copy(_route).setLength(p.wanderSpeed * 2 * this.quirk.speed * this.injurySpeed);
+        faceYaw = Math.atan2(_route.x, _route.z);
       } else {
         this.investigateT += dt;
         faceYaw = this.aimYaw + Math.sin(this.investigateT * 1.3 + this.quirk.seed) * 0.8 * dt;
@@ -324,7 +341,12 @@ export class Zombie extends Humanoid {
       _v2.y = 0;
       if (this.wanderTimer <= 0 || _v2.length() < 0.4) {
         this.wanderTimer = rand(4, 9);
-        this.wanderTarget.set(this.pos.x + rand(-5, 5), 0, this.pos.z + rand(-5, 5));
+        // Somewhere nearby it can walk straight to (any spot, without a nav grid).
+        for (let tries = 0; tries < 6; tries++) {
+          this.wanderTarget.set(this.pos.x + rand(-5, 5), 0, this.pos.z + rand(-5, 5));
+          if (!world.nav || world.nav.clear(this.pos, this.wanderTarget)) break;
+          this.wanderTarget.copy(this.pos);
+        }
       } else if (_v2.length() > 0.4) {
         _desired.copy(_v2).setLength(p.wanderSpeed * this.quirk.speed * this.injurySpeed);
         faceYaw = Math.atan2(_v2.x, _v2.z);
@@ -623,7 +645,8 @@ export class Zombie extends Humanoid {
     else if (this.crawlDelay <= 0 && !(this.state === 'feed' && dist < 0.6)) mode = 'crawl';
     rd.drive = {
       mode,
-      target,
+      // Hauling itself round obstacles too; reaching for you once close.
+      target: dist < 1.2 ? target : (this._crawlTo ??= new THREE.Vector3()).copy(rd.chest).add(this._routeTo(world, target, _route, rd.chest)),
       speed: p.crawlSpeed * this.quirk.speed,
       reach: [player.legs[0].ankle, player.legs[1].ankle], // grabbing at your ankles
       onPlant: (pos) => this.onFootstep?.({ pos, stepScale: 0 }), // a hand slapping the road

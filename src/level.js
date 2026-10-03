@@ -7,6 +7,7 @@ import { STEP_UP } from './rig-utils.js';
 const ROAD_HALF = 4; // two lanes
 const WALK = 2.5; // sidewalk width
 const EDGE = ROAD_HALF + WALK; // building line
+export const STREET_EDGE = EDGE;
 export const STREET_LENGTH = 116;
 
 const rand = (a, b) => a + Math.random() * (b - a);
@@ -257,7 +258,7 @@ function toLocal(c, x, z) {
   return [dx * c.cos - dz * c.sin, dx * c.sin + dz * c.cos];
 }
 
-function contains(c, x, z, margin = 0) {
+export function contains(c, x, z, margin = 0) {
   const [lx, lz] = toLocal(c, x, z);
   return Math.abs(lx) <= c.hx + margin && Math.abs(lz) <= c.hz + margin;
 }

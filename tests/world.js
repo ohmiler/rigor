@@ -6,6 +6,7 @@ import { Gore } from '../src/gore.js';
 import { Grapple } from '../src/grapple.js';
 import { DEFAULTS, ZOMBIE_DEFAULTS } from '../src/params.js';
 import { heightAt, solidAt, findLedge, collideCircle } from '../src/level.js';
+import { NavGrid } from '../src/nav.js';
 
 // A headless world for tests: the game's own bodies, guns and gore on a
 // flat floor (plus any boxes a test adds), stepped at the game's 120 Hz.
@@ -28,6 +29,7 @@ export function makeWorld({ params = {}, zparams = {} } = {}) {
   const player = new Player(scene, p);
   const grapple = new Grapple(player, gore, p);
   const zombies = [];
+  /** @type {{ player: Player, zombies: Zombie[], grapple: Grapple, nav?: NavGrid }} */
   const world = { player, zombies, grapple };
 
   const w = {
@@ -43,6 +45,11 @@ export function makeWorld({ params = {}, zparams = {} } = {}) {
     // A box on the floor: top height `top`, half-sizes hx, hz.
     box(x, z, hx, hz, top, opts = {}) {
       level.colliders.push({ x, z, hx, hz, cos: 1, sin: 0, top, climb: false, vault: false, ...opts });
+    },
+    // Let zombies path round the boxes (built once they're all placed).
+    navigate(bounds = { minX: -10, maxX: 10, minZ: -10, maxZ: 10 }) {
+      world.nav = new NavGrid(level, bounds);
+      return world.nav;
     },
     addZombie(x, z, type = 'walker') {
       const zombie = new Zombie(scene, zp, new THREE.Vector3(x, 0, z), type);
@@ -66,6 +73,9 @@ export function makeWorld({ params = {}, zparams = {} } = {}) {
         const inp = typeof input === 'function' ? input(t) : input;
         player.update(STEP, { x: 0, z: 0, ...inp });
         for (const z of zombies) z.update(STEP, world);
+        // Bodies can't overlap walls (as main.js does).
+        if (player.state !== 'dead' && !player.traversal) collideCircle(level, player.pos, 0.3, player.pos.y);
+        for (const z of zombies) if (!z.dead && !z.traversal && !z.ragdoll) collideCircle(level, z.pos, 0.3, z.pos.y);
         grapple.update(STEP, 0);
         gore.update(STEP);
         each?.(t);

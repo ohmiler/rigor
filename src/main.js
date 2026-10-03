@@ -9,7 +9,8 @@ import { Pickups } from './pickups.js';
 import { Sound } from './audio.js';
 import { Throwables } from './throwables.js';
 import { MELEE } from './weapons.js';
-import { buildStreet, collideCircle, insideCollider, heightAt, findLedge, solidAt, STREET_LENGTH } from './level.js';
+import { buildStreet, collideCircle, insideCollider, heightAt, findLedge, solidAt, STREET_LENGTH, STREET_EDGE } from './level.js';
+import { NavGrid } from './nav.js';
 import { Humanoid } from './humanoid.js';
 import { loadParams, ZOMBIE_DEFAULTS, ZOMBIE_KEY, VISIBILITY } from './params.js';
 import { DEG } from './rig-utils.js';
@@ -68,6 +69,8 @@ Humanoid.terrain = {
   // Ragdolls: shove a ball out of anything taller than `stepUp` above its bottom.
   collide: (pos, radius, bottom, stepUp) => collideCircle(level, pos, radius, bottom, stepUp),
 };
+// How zombies find their way round the cars and barriers to you.
+const nav = new NavGrid(level, { minX: -STREET_EDGE, maxX: STREET_EDGE, minZ: -1, maxZ: STREET_LENGTH + 1 });
 
 // Day is kept around as a debugging view; night is the game.
 function applyEnvironment() {
@@ -470,7 +473,7 @@ function kickBodies() {
 
 function updateWorld(dt, input) {
   player.update(dt, escaped ? NO_INPUT : input);
-  const world = { player, zombies, grapple };
+  const world = { player, zombies, grapple, nav };
   for (const z of zombies) z.update(dt, world);
   if (player.state === 'normal' || player.state === 'grabbed') runTime += dt;
 
@@ -895,5 +898,5 @@ if (import.meta.env.DEV) {
       kickBodies();
     }
   };
-  /** @type {any} */ (window).__rigor = { player, grapple, gore, params, zparams, level, pickups, sound, restart, startGame, advance, addZombie, get zombies() { return zombies; } };
+  /** @type {any} */ (window).__rigor = { player, grapple, gore, params, zparams, level, nav, pickups, sound, restart, startGame, advance, addZombie, get zombies() { return zombies; } };
 }

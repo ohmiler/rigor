@@ -31,7 +31,7 @@ jobs:
       - run: npm ci
       - name: Type check
         run: npm run typecheck
-      - name: Game systems (walking, feet, steps, falls, guns, aim, wounds, bodies)
+      - name: Game systems (walking, feet, steps, falls, guns, aim, wounds, bodies, pathfinding)
         run: npm test
       - name: Install a browser for the smoke tests
         run: npx playwright install --with-deps chromium
