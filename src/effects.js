@@ -1,5 +1,8 @@
 import * as THREE from 'three';
 
+// Its own dice: looks and sounds never shift the game's seeded ones (replay.js).
+const random = Math.random;
+
 const RANGE = 40;
 const _hitPoint = new THREE.Vector3();
 
@@ -76,8 +79,8 @@ export class Effects {
     this.flashLight.intensity = 6;
     this.flash.position.copy(muzzle);
     this.flash.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), dir);
-    this.flash.rotateZ(Math.random() * Math.PI);
-    this.flash.scale.setScalar(0.8 + Math.random() * 0.6);
+    this.flash.rotateZ(random() * Math.PI);
+    this.flash.scale.setScalar(0.8 + random() * 0.6);
     this.flash.visible = true;
     this.flashTime = 0.045;
 

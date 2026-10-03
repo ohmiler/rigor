@@ -31,11 +31,11 @@ jobs:
       - run: npm ci
       - name: Type check
         run: npm run typecheck
-      - name: Game systems (walking, feet, steps, falls, guns, aim, wounds, bodies, pathfinding)
+      - name: Game systems (walking, feet, steps, falls, guns, aim, wounds, bodies, pathfinding, replays)
         run: npm test
       - name: Install a browser for the smoke tests
         run: npx playwright install --with-deps chromium
-      - name: Smoke tests in a real browser (load, start, walk, fire, swap)
+      - name: Smoke tests in a real browser (load, start, walk, fire, swap, replay)
         run: npm run test:e2e
       - uses: actions/upload-artifact@v4
         if: failure()

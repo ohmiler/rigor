@@ -1,3 +1,6 @@
+
+// Its own dice: looks and sounds never shift the game's seeded ones (replay.js).
+const random = Math.random;
 // Every sound in the game, synthesised with Web Audio: no sample files to load
 // or license. Each effect is a few oscillators and filtered noise bursts with
 // short envelopes. Sounds in the world are panned and fade with distance from
@@ -5,7 +8,7 @@
 
 const MUTE_KEY = 'rigor.muted';
 
-const rand = (a, b) => a + Math.random() * (b - a);
+const rand = (a, b) => a + random() * (b - a);
 
 export class Sound {
   constructor() {
@@ -37,7 +40,7 @@ export class Sound {
     const len = ctx.sampleRate * 2;
     this.noiseBuffer = ctx.createBuffer(1, len, ctx.sampleRate);
     const data = this.noiseBuffer.getChannelData(0);
-    for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
+    for (let i = 0; i < len; i++) data[i] = random() * 2 - 1;
 
     this._startAmbience();
   }
@@ -99,7 +102,7 @@ export class Sound {
     g.gain.linearRampToValueAtTime(gain, t + attack);
     g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
     src.connect(f).connect(g).connect(dest);
-    src.start(t, Math.random() * 1.5);
+    src.start(t, random() * 1.5);
     src.stop(t + dur + 0.05);
     return g;
   }
@@ -162,7 +165,7 @@ export class Sound {
       const ng = ctx.createGain();
       ng.gain.value = rasp;
       n.connect(nf).connect(ng).connect(env);
-      n.start(t, Math.random());
+      n.start(t, random());
       n.stop(t + dur + 0.05);
     }
     osc.start(t);
@@ -233,7 +236,7 @@ export class Sound {
     this._noise(o, { dur: 0.05, type: 'highpass', freq: 2500, gain: 1 });
     this._noise(o, { dur: 0.25, type: 'bandpass', freq: 4200, q: 1.5, gain: 0.6 });
     for (let i = 0; i < 7; i++) {
-      this._tone(o, { at: 0.03 + Math.random() * 0.35, dur: 0.07, type: 'sine', freq: rand(3000, 6500), gain: 0.18 });
+      this._tone(o, { at: 0.03 + random() * 0.35, dur: 0.07, type: 'sine', freq: rand(3000, 6500), gain: 0.18 });
     }
   }
 
@@ -377,7 +380,7 @@ export class Sound {
     const o = this._out(pos, 30, 0.35);
     if (!o) return;
     this._noise(o, { dur: 0.03, type: 'highpass', freq: 3000, gain: 0.7 });
-    if (Math.random() < 0.35) this._tone(o, { at: 0.01, dur: 0.18, freq: rand(2200, 3200), freqEnd: 1600, gain: 0.12 }); // ricochet
+    if (random() < 0.35) this._tone(o, { at: 0.01, dur: 0.18, freq: rand(2200, 3200), freqEnd: 1600, gain: 0.12 }); // ricochet
   }
 
   bodyFall(pos) {

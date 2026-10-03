@@ -12,6 +12,7 @@ import { MELEE } from './weapons.js';
 import { buildStreet, collideCircle, insideCollider, heightAt, findLedge, solidAt, STREET_LENGTH, STREET_EDGE } from './level.js';
 import { NavGrid } from './nav.js';
 import { Post } from './post.js';
+import { Recorder, Playback, mulberry32, newSeed, round, fingerprint } from './replay.js';
 import { Humanoid } from './humanoid.js';
 import { loadParams, ZOMBIE_DEFAULTS, ZOMBIE_KEY, VISIBILITY } from './params.js';
 import { DEG } from './rig-utils.js';
@@ -312,19 +313,149 @@ function screamerShriek(screamer) {
   }
 }
 
-function restart() {
-  gore.clear();
-  throwables.clear();
-  grapple.reset();
-  player.reset(level.start);
+// ---------------------------------------------------------------- runs & replays
+
+// Each run rolls its dice from its own seed, and the simulation steps at a
+// fixed rate, so a run is its seed plus the input on every step: that's
+// what's recorded, and a replay feeds it back (replay.js). Simulation code
+// gets the seeded dice; looks and sounds keep the real ones.
+const realRandom = Math.random;
+let rng = mulberry32(1);
+function seeded(fn) {
+  Math.random = rng;
+  try {
+    fn();
+  } finally {
+    Math.random = realRandom;
+  }
+}
+// ?seed=123 plays that run's dice (the same zombies and supplies every time).
+const seedParam = new URLSearchParams(location.search).get('seed');
+const urlSeed = seedParam && /^\d+$/.test(seedParam) ? Number(seedParam) >>> 0 : null;
+let recorder = null; // the run being played
+let playback = null; // or the replay being watched
+let replaySpeed = 1;
+let watchedLevers = null; // your levers, put back after a replay with its own
+let pending = []; // commands (reload, switch weapon...) for the next step
+let acc = 0; // real time not yet simulated
+// Levers that only change how things look stay yours when a replay brings its own.
+const VIEW_LEVERS = new Set(['paused', 'slowMo', 'timeScale', 'showSkeleton', 'postFX', 'bloom', 'vignette', 'grain', 'visibility', 'night', 'ambientLight', 'moonLight', 'nearGlow', 'fogRange', 'exposure']);
+const levers = () => ({
+  params: Object.fromEntries(Object.entries(params).filter(([k]) => !VIEW_LEVERS.has(k))),
+  zparams: { ...zparams },
+});
+
+function restart(seed = urlSeed ?? newSeed()) {
+  rng = mulberry32(seed);
+  seeded(() => {
+    gore.clear();
+    throwables.clear();
+    grapple.reset();
+    player.reset(level.start);
+    pickups.reset();
+    spawnLevelZombies();
+  });
   setSkeleton(params.showSkeleton);
   kills = 0;
   runTime = 0;
   escaped = false;
+  deathSlow = 0;
+  hurtFlash = 0;
+  acc = 0;
+  pending = [];
   document.getElementById('dead').hidden = true;
   document.getElementById('won').hidden = true;
-  pickups.reset();
-  spawnLevelZombies();
+  recorder = playback ? null : new Recorder(seed, levers());
+}
+
+// Watch a recorded run (yours just now, or a file someone sent).
+function watchReplay(data) {
+  let pb;
+  try {
+    pb = new Playback(data);
+  } catch (e) {
+    showToast(e.message);
+    return;
+  }
+  if (!watchedLevers) watchedLevers = levers();
+  Object.assign(params, data.settings?.params ?? {});
+  Object.assign(zparams, data.settings?.zparams ?? {});
+  playback = pb;
+  replaySpeed = 1;
+  if (!started) startGame(false);
+  restart(pb.seed);
+  ui.replay.hidden = false;
+}
+
+function leaveReplay() {
+  playback = null;
+  if (watchedLevers) {
+    Object.assign(params, watchedLevers.params);
+    Object.assign(zparams, watchedLevers.zparams);
+    watchedLevers = null;
+  }
+  ui.replay.hidden = true;
+  restart();
+}
+
+function saveReplay() {
+  if (!recorder) return;
+  const blob = new Blob([JSON.stringify(recorder)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `rigor-replay-${recorder.seed}.json`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+async function openReplayFile(file) {
+  let data;
+  try {
+    data = JSON.parse(await file.text());
+  } catch {
+    showToast('That file is not a RIGOR replay');
+    return;
+  }
+  watchReplay(data);
+}
+
+// The state of the world in a few numbers, to catch a replay drifting.
+function worldFingerprint() {
+  const v = [player.pos.x, player.pos.y, player.pos.z, player.health, kills, zombies.length];
+  for (const z of zombies) v.push(z.pos.x, z.pos.z);
+  return fingerprint(v);
+}
+
+// Things you do once rather than hold: done at the start of the next step,
+// recorded on it, and played back on the same step.
+function queue(cmd) {
+  if (started && !playback) pending.push(cmd);
+}
+const _throwAim = new THREE.Vector3();
+function runCommand([name, a, b, c]) {
+  if (name === 'reload') player.startReload();
+  else if (name === 'weapon') player.switchWeapon(a);
+  else if (name === 'swap') player.switchWeapon(player.switchTo ? player.weapon.name : player.otherWeapon());
+  else if (name === 'throw') player.startThrow(a == null ? null : _throwAim.set(a, b, c));
+  else if (name === 'flashlight') player.toggleFlashlight();
+  else if (name === 'shove') player.startShove();
+  else if (name === 'wave') spawnWave();
+}
+
+// One fixed simulation step.
+function simStep(dt, input, cmds) {
+  seeded(() => {
+    let presses = 0;
+    for (const cmd of cmds) {
+      if (cmd[0] === 'struggle') presses += cmd[1];
+      else runCommand(cmd);
+    }
+    updateWorld(dt, input);
+    grapple.update(dt, presses);
+    pickups.update(dt, player, takePickup);
+    throwables.update(dt);
+    kickBodies();
+  });
 }
 
 // ---------------------------------------------------------------- zombies
@@ -561,6 +692,7 @@ function startGame(fullscreen) {
   started = true;
   startScreen.hidden = true;
   jumpQueued = false;
+  if (!playback) restart(); // a fresh, seeded, recorded run
   /** @type {HTMLElement} */ (document.activeElement)?.blur?.(); // or Space would "click" the hidden button
   if (fullscreen) enterFullscreen();
 }
@@ -582,21 +714,37 @@ window.addEventListener('keydown', (e) => {
     if (e.code === 'Enter') startGame(false);
     return;
   }
-  if (e.code === 'Space' || e.code === 'KeyE') strugglePresses++;
-  if (e.code === 'Space') jumpQueued = true; // vault/climb when not grabbed
-  if (e.code === 'Enter' && (player.state === 'dead' || escaped)) restart();
-  if (e.code === 'KeyR') player.startReload();
-  if (e.code === 'Digit1') player.switchWeapon('rifle');
-  if (e.code === 'Digit2') player.switchWeapon('pistol');
-  if (e.code === 'Digit3') player.switchWeapon('knife');
-  if (e.code === 'KeyQ') player.switchWeapon(player.switchTo ? player.weapon.name : player.otherWeapon());
-  if (e.code === 'KeyG') player.startThrow(lastAim);
   if (e.code === 'KeyP') params.paused = !params.paused;
-  if (e.code === 'KeyF') player.toggleFlashlight();
   if (e.code === 'KeyV') cycleVisibility();
   if (e.code === 'KeyM') showToast(sound.toggleMute() ? 'Sound off (M)' : 'Sound on (M)');
+  if (playback) {
+    // Watching: 1/2/4 sets the speed, Enter leaves.
+    if (e.code === 'Digit1') replaySpeed = 1;
+    if (e.code === 'Digit2') replaySpeed = 2;
+    if (e.code === 'Digit4') replaySpeed = 4;
+    if (e.code === 'Enter') leaveReplay();
+    return;
+  }
+  if (e.code === 'F8') {
+    // Save the run so far: "something odd just happened, here it is".
+    e.preventDefault();
+    saveReplay();
+  }
+  const over = player.state === 'dead' || escaped;
+  if (over && e.code === 'Enter') restart();
+  if (over && e.code === 'KeyY') watchReplay(recorder.toJSON());
+  if (over && e.code === 'KeyU') saveReplay();
+  if (e.code === 'Space' || e.code === 'KeyE') strugglePresses++;
+  if (e.code === 'Space') jumpQueued = true; // vault/climb when not grabbed
+  if (e.code === 'KeyR') queue(['reload']);
+  if (e.code === 'Digit1') queue(['weapon', 'rifle']);
+  if (e.code === 'Digit2') queue(['weapon', 'pistol']);
+  if (e.code === 'Digit3') queue(['weapon', 'knife']);
+  if (e.code === 'KeyQ') queue(['swap']);
+  if (e.code === 'KeyG') queue(lastAim ? ['throw', lastAim.x, lastAim.y, lastAim.z] : ['throw']);
+  if (e.code === 'KeyF') queue(['flashlight']);
   if (DEV) {
-    if (e.code === 'KeyN') spawnWave();
+    if (e.code === 'KeyN') queue(['wave']);
     if (e.code === 'KeyT') params.slowMo = !params.slowMo;
     if (e.code === 'KeyB') setSkeleton(!params.showSkeleton);
   }
@@ -617,7 +765,7 @@ renderer.domElement.addEventListener('pointermove', (e) => {
 let triggerHeld = false;
 renderer.domElement.addEventListener('pointerdown', (e) => {
   if (e.button === 0) triggerHeld = true;
-  if (e.button === 2 && started) player.startShove();
+  if (e.button === 2) queue(['shove']);
 });
 window.addEventListener('pointerup', (e) => {
   if (e.button === 0) triggerHeld = false;
@@ -663,6 +811,8 @@ function readInput() {
       aimPoint = aimHit;
     }
   }
+  // To the centimetre, as the replay stores it.
+  if (aimPoint) aimPoint.set(round(aimPoint.x), round(aimPoint.y), round(aimPoint.z));
   lastAim = aimPoint;
   lastAimZone = zone;
   // Camera looks toward +Z, so screen-right is world -X.
@@ -732,7 +882,34 @@ const ui = {
   ammoReserve: document.querySelector('#ammo .reserve'),
   ammoState: document.querySelector('#ammo .state'),
   parkour: document.getElementById('parkour'),
+  replay: document.getElementById('replay'),
+  replayInfo: document.querySelector('#replay .info'),
+  replayBar: /** @type {HTMLElement} */ (document.querySelector('#replay .bar i')),
 };
+
+function updateReplayUI() {
+  if (!playback) return;
+  const state = playback.done ? 'over · <b>Enter</b> to play' : `${replaySpeed}×`;
+  const drift = playback.desync !== null ? ` · <span class="drift">drifted at ${Math.round(playback.desync / 120)} s</span>` : '';
+  const html = `<b>REPLAY</b> ${state}${drift}`;
+  if (ui.replayInfo.innerHTML !== html) ui.replayInfo.innerHTML = html;
+  ui.replayBar.style.width = `${playback.progress * 100}%`;
+}
+
+// Buttons on the end screens and the start screen; a dropped file plays too.
+document.getElementById('dead-replay').addEventListener('click', () => watchReplay(recorder.toJSON()));
+document.getElementById('won-replay').addEventListener('click', () => watchReplay(recorder.toJSON()));
+document.getElementById('dead-save').addEventListener('click', saveReplay);
+document.getElementById('won-save').addEventListener('click', saveReplay);
+const replayFile = /** @type {HTMLInputElement} */ (document.getElementById('replay-file'));
+document.getElementById('open-replay').addEventListener('click', () => replayFile.click());
+replayFile.addEventListener('change', () => replayFile.files[0] && openReplayFile(replayFile.files[0]));
+window.addEventListener('dragover', (e) => e.preventDefault());
+window.addEventListener('drop', (e) => {
+  e.preventDefault();
+  const file = e.dataTransfer?.files[0];
+  if (file) openReplayFile(file);
+});
 const timer = new THREE.Timer();
 timer.connect(document);
 const STEP = 1 / 120;
@@ -789,7 +966,7 @@ function updateUI(real) {
   ui.ammo.hidden = player.state === 'dead';
 
   // The reticle: a ring at the cursor as wide as the cone a shot can go in.
-  const aiming = started && player.state !== 'dead' && !escaped && hasMouse && lastAim;
+  const aiming = started && !playback && player.state !== 'dead' && !escaped && hasMouse && lastAim;
   ui.reticle.hidden = !aiming;
   renderer.domElement.style.cursor = aiming ? 'none' : '';
   if (aiming) {
@@ -882,30 +1059,50 @@ function frame(timestamp) {
   watchFrameRate(Math.min(elapsed, 1)); // (a hidden tab's gap isn't a slow frame)
   deathSlow = Math.max(deathSlow - real, 0);
   const slow = (params.slowMo ? 0.25 : 1) * (deathSlow > 0 ? 0.3 : 1);
-  const dt = params.paused || !started ? 0 : real * params.timeScale * slow;
+  const running = started && !params.paused;
+  const dt = running ? real * params.timeScale * slow : 0;
+  const stepDt = STEP * params.timeScale * slow; // slow motion: shorter steps, not fewer
 
   // Dev test scripts can set window.__rigorInput to drive the game alone.
   const override = import.meta.env.DEV && /** @type {any} */ (window).__rigorInput;
   const input = override ? { ...override } : readInput();
-  // A tap is consumed by the first simulation step only.
-  input.jump = jumpQueued && dt > 0;
-  if (dt > 0) jumpQueued = false;
-  const steps = Math.ceil(dt / STEP);
-  for (let i = 0; i < steps; i++) {
-    updateWorld(dt / steps, input);
-    input.jump = false;
+  // Fixed steps of real time; a tap (jump, struggle, a command) goes to the
+  // first step this frame.
+  if (running) acc += real * (playback ? replaySpeed : 1);
+  let first = true;
+  while (acc >= STEP) {
+    acc -= STEP;
+    if (playback) {
+      if (playback.done) {
+        acc = 0;
+        break;
+      }
+      const s = playback.next();
+      simStep(s.dt, s.input, s.cmds);
+      if (playback.step % 120 === 0) playback.verify(worldFingerprint());
+      continue;
+    }
+    input.jump = first && jumpQueued;
+    const cmds = first ? pending : [];
+    if (first && strugglePresses) cmds.push(['struggle', strugglePresses]);
+    if (first) {
+      jumpQueued = false;
+      strugglePresses = 0;
+      pending = [];
+    }
+    recorder?.record(stepDt, input, cmds);
+    simStep(stepDt, input, cmds);
+    if (recorder && recorder.step % 120 === 0) recorder.check(worldFingerprint());
+    first = false;
   }
-  grapple.update(dt, params.paused ? 0 : strugglePresses);
-  strugglePresses = 0;
+  if (!running) strugglePresses = 0;
   effects.update(dt);
   gore.update(dt);
-  pickups.update(dt, player, takePickup);
-  throwables.update(dt);
 
   updateCamera(real);
   updateUI(real);
   updateSounds(dt, real);
-  if (dt > 0) kickBodies();
+  updateReplayUI();
 
   hudTimer -= real;
   if (DEV && hudTimer <= 0) {
@@ -926,12 +1123,9 @@ if (import.meta.env.DEV) {
   // Run the world forward without rendering (the tab may be hidden in tests).
   const advance = (secs, input = NO_INPUT) => {
     for (let t = 0; t < secs; t += STEP) {
-      updateWorld(STEP, { ...input });
-      grapple.update(STEP, 0);
+      simStep(STEP, { ...input }, []);
       gore.update(STEP);
-      throwables.update(STEP);
-      kickBodies();
     }
   };
-  /** @type {any} */ (window).__rigor = { player, grapple, gore, params, zparams, level, nav, post, hurt: () => (hurtFlash = 1), pickups, sound, restart, startGame, advance, addZombie, get zombies() { return zombies; } };
+  /** @type {any} */ (window).__rigor = { player, grapple, gore, params, zparams, level, nav, post, hurt: () => (hurtFlash = 1), watchReplay, get recorder() { return recorder; }, get playback() { return playback; }, worldFingerprint, pickups, sound, restart, startGame, advance, addZombie, get zombies() { return zombies; } };
 }

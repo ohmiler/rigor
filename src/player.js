@@ -118,28 +118,14 @@ export class Player extends Humanoid {
   }
 
   // Fresh body at `spawn` (the old one may be in pieces).
+  // A new run: a brand-new player in place of this one, every spring, timer
+  // and weapon as built (a replay has to start from exactly the same body),
+  // keeping only the hooks main.js set.
   reset(spawn = new THREE.Vector3()) {
+    const hooks = Object.fromEntries(Object.entries(this).filter(([k, v]) => /^on[A-Z]/.test(k) && typeof v === 'function'));
     this.dispose();
-    for (const d of this.drops) this.body.remove(d.mesh);
-    this.drops = [];
-    this._buildBody(PLAYER_LOOK);
-    this._buildGuns();
-    this._resetWeapons();
+    Object.assign(this, new Player(this.scene, this.params), hooks);
     this.pos.copy(spawn);
-    this.vel.set(0, 0, 0);
-    this.accel.set(0, 0, 0);
-    this.lean.set(0, 0);
-    this.leanVel.set(0, 0);
-    this.health = this.params.maxHealth;
-    this.state = 'normal';
-    this.grabbedBy = null;
-    this.stun = 0;
-    this.traversal = null;
-    this.ragdoll = null;
-    this.traversalPose.pitch = this.traversalPose.roll = 0;
-    this.vy = 0;
-    this.aimPitch = 0;
-    this.aimConverge = 0;
     this._settle();
   }
 

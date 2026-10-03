@@ -1,5 +1,8 @@
 import * as THREE from 'three';
 
+// Its own dice: looks and sounds never shift the game's seeded ones (replay.js).
+const random = Math.random;
+
 const MAX_DROPS = 700;
 const UP = new THREE.Vector3(0, 1, 0);
 
@@ -108,14 +111,14 @@ export class Gore {
       d.pos.copy(origin);
       d.vel
         .copy(dir)
-        .add(_v.set(Math.random() * 2 - 1, Math.random() * 2 - 1, Math.random() * 2 - 1).multiplyScalar(spread))
+        .add(_v.set(random() * 2 - 1, random() * 2 - 1, random() * 2 - 1).multiplyScalar(spread))
         .normalize()
-        .multiplyScalar(speed * (0.4 + Math.random() * 0.8));
+        .multiplyScalar(speed * (0.4 + random() * 0.8));
       d.life = 25;
       d.landed = false;
-      d.size = 0.4 + Math.random() * Math.random() * 1.2; // mostly small, a few big
-      d.stretch = 0.6 + Math.random() * 0.8;
-      d.yaw = Math.random() * Math.PI;
+      d.size = 0.4 + random() * random() * 1.2; // mostly small, a few big
+      d.stretch = 0.6 + random() * 0.8;
+      d.yaw = random() * Math.PI;
     }
   }
 

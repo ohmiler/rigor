@@ -573,3 +573,87 @@ body:not(.dev) .dev-only {
 #reticle.body::before { border-color: #ffffff; border-width: 2px; }
 #reticle.legs::before { border-color: #ffc85a; }
 #reticle.legs i { background: #ffc85a; }
+
+/* Replays: buttons on the end screens, the bar while watching one. */
+.end-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  margin-top: 14px;
+  pointer-events: auto;
+}
+
+.end-actions button,
+button.link {
+  font: inherit;
+  font-size: 13px;
+  color: #dfe6f3;
+  background: rgba(14, 19, 29, 0.8);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 6px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+.end-actions button:hover,
+button.link:hover {
+  border-color: rgba(255, 255, 255, 0.6);
+}
+
+.end-actions b {
+  margin-left: 4px;
+  color: #ffd27a;
+}
+
+button.link {
+  padding: 2px 8px;
+}
+
+#replay {
+  position: fixed;
+  top: 84px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(420px, calc(100vw - 32px));
+  padding: 8px 12px;
+  background: rgba(14, 19, 29, 0.8);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 8px;
+  color: #dfe6f3;
+  font-size: 13px;
+  text-align: center;
+  pointer-events: none;
+}
+
+#replay[hidden] {
+  display: none;
+}
+
+#replay .info b {
+  color: #ffd27a;
+  letter-spacing: 0.12em;
+}
+
+#replay .drift {
+  color: #ff8a7a;
+}
+
+#replay .bar {
+  height: 4px;
+  margin: 6px 0;
+  background: rgba(255, 255, 255, 0.12);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+#replay .bar i {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: #ffd27a;
+}
+
+#replay .hint {
+  font-size: 11px;
+  opacity: 0.75;
+}

@@ -41,6 +41,8 @@
           <button id="play-window" type="button">Play in a window</button>
         </div>
         <p class="note">Or press <b>Enter</b> to play in a window. <b>Esc</b> leaves fullscreen.</p>
+        <p class="note"><button id="open-replay" type="button" class="link">Watch a replay file…</button> (or drop one on the page)</p>
+        <input id="replay-file" type="file" accept=".json,application/json" hidden />
         <p class="note touch" hidden>RIGOR needs a keyboard and a mouse.</p>
       </div>
     </div>
@@ -65,11 +67,24 @@
       <div class="title">YOU MADE IT</div>
       <div class="sub" id="won-sub"></div>
       <div class="sub">Press <b>Enter</b> to run it again</div>
+      <div class="end-actions">
+        <button id="won-replay" type="button">Watch replay <b>Y</b></button>
+        <button id="won-save" type="button">Save replay <b>U</b></button>
+      </div>
     </div>
     <div id="dead" hidden>
       <div class="title">YOU DIED</div>
       <div class="sub" id="dead-sub"></div>
       <div class="sub">Press <b>Enter</b> to try again</div>
+      <div class="end-actions">
+        <button id="dead-replay" type="button">Watch replay <b>Y</b></button>
+        <button id="dead-save" type="button">Save replay <b>U</b></button>
+      </div>
+    </div>
+    <div id="replay" hidden>
+      <div class="info"></div>
+      <div class="bar"><i></i></div>
+      <div class="hint"><b>1</b> <b>2</b> <b>4</b> speed · <b>P</b> pause · <b>Enter</b> leave</div>
     </div>
     <div id="hud">
       <pre id="stats" class="dev-only"></pre>
