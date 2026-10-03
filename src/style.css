@@ -291,7 +291,7 @@ canvas {
   position: fixed;
   left: 14px;
   bottom: 14px;
-  max-width: calc(100vw - 28px);
+  max-width: calc(100vw - 230px); /* clear of the ammo readout on the right */
   padding: 10px 12px;
   background: rgba(14, 19, 29, 0.85);
   border-radius: 8px;
@@ -492,4 +492,67 @@ body:not(.dev) .dev-only {
   15% { transform: translateY(0); opacity: 1; }
   70% { opacity: 1; }
   to { transform: translateY(-14px); opacity: 0; }
+}
+
+#ammo .weapon {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  color: #dfe6f3;
+}
+#ammo .weapon span {
+  font-weight: 400;
+  letter-spacing: 0.08em;
+  color: #7f8aa0;
+}
+
+/* The reticle: a ring as wide as the spread, with four ticks. */
+#reticle {
+  --r: 12px;
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+  z-index: 5;
+}
+#reticle[hidden] {
+  display: none;
+}
+#reticle::before {
+  content: '';
+  position: absolute;
+  left: calc(-1 * var(--r));
+  top: calc(-1 * var(--r));
+  width: calc(2 * var(--r));
+  height: calc(2 * var(--r));
+  border: 1.5px solid rgba(240, 244, 250, 0.75);
+  border-radius: 50%;
+  box-shadow: 0 0 3px rgba(0, 0, 0, 0.6);
+}
+#reticle i {
+  position: absolute;
+  background: rgba(240, 244, 250, 0.9);
+  box-shadow: 0 0 2px rgba(0, 0, 0, 0.7);
+}
+#reticle i:nth-child(1),
+#reticle i:nth-child(2) {
+  width: 2px;
+  height: 6px;
+  left: -1px;
+}
+#reticle i:nth-child(1) { top: calc(-1 * var(--r) - 8px); }
+#reticle i:nth-child(2) { top: calc(var(--r) + 2px); }
+#reticle i:nth-child(3),
+#reticle i:nth-child(4) {
+  width: 6px;
+  height: 2px;
+  top: -1px;
+}
+#reticle i:nth-child(3) { left: calc(-1 * var(--r) - 8px); }
+#reticle i:nth-child(4) { left: calc(var(--r) + 2px); }
+#reticle.busy::before {
+  border-color: rgba(240, 244, 250, 0.3);
+  border-style: dashed;
 }

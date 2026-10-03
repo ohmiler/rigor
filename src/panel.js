@@ -131,7 +131,16 @@ export function createPanel(params, zparams, player, { onSkeleton, onSpawn, onFu
   recoil.add(params, 'medkitHeal', 0, 100, 1).name('Medkit heals');
   recoil.add(params, 'bulletDamage', 1, 200, 1).name('Bullet damage');
   recoil.add(params, 'headshotMultiplier', 1, 10, 0.5).name('Headshot ×');
-  recoil.add(params, 'spread', 0, 10, 0.1).name('Spread °');
+  recoil.add(params, 'spread', 0, 10, 0.1).name('Spread ° (still)');
+  recoil.add(params, 'spreadMove', 0, 15, 0.1).name('Spread ° added running');
+  recoil.add(params, 'bloomPerShot', 0, 3, 0.05).name('Spread ° per shot');
+  recoil.add(params, 'bloomMax', 0, 15, 0.5).name('Max shot spread °');
+  recoil.add(params, 'bloomRecover', 0, 30, 0.5).name('Spread recovery °/s');
+  recoil.add(params, 'startPistolReserve', 0, 150, 1).name('Spare pistol rounds');
+  recoil.add(params, 'pistolAmmoPickup', 0, 60, 1).name('Rounds per pistol box');
+  recoil.add(params, 'shoveRange', 0.5, 3, 0.05).name('Shove reach');
+  recoil.add(params, 'shoveForce', 0, 8, 0.1).name('Shove force');
+  recoil.add(params, 'shoveCooldown', 0.1, 3, 0.05).name('Shove cooldown');
   recoil.add(params, 'recoilKick', 0, 5, 0.05).name('Kick back');
   recoil.add(params, 'recoilClimb', 0, 25, 0.25).name('Muzzle climb');
   recoil.add(params, 'recoilYaw', 0, 10, 0.1).name('Side wobble');

@@ -10,6 +10,7 @@ import { Sound } from './audio.js';
 import { buildStreet, collideCircle, insideCollider, heightAt, findLedge, solidAt, STREET_LENGTH } from './level.js';
 import { Humanoid } from './humanoid.js';
 import { loadParams, ZOMBIE_DEFAULTS, ZOMBIE_KEY, VISIBILITY } from './params.js';
+import { DEG } from './rig-utils.js';
 import './style.css';
 
 const params = loadParams();
@@ -115,7 +116,27 @@ const sound = new Sound();
 sound.listener = player.pos;
 player.onFootstep = () => sound.footstep(player.pos, { speed: player.speed });
 player.onLand = (impact) => sound.land(player.pos, impact);
-player.onReloadEvent = (step) => sound.reload(step);
+player.onReloadEvent = (step) => sound.reload(step === 'rack' ? 'seat' : step);
+player.onWeaponEvent = (event) => sound.weapon(event);
+// The shove lands on whatever is in a cone in front, within reach.
+player.onShove = (dir) => {
+  let hit = false;
+  for (const z of zombies) {
+    if (z.dead) continue;
+    const to = z.pos.clone().sub(player.pos).setY(0);
+    const d = to.length();
+    if (d > params.shoveRange || (d > 0.2 && to.normalize().dot(dir) < 0.45)) continue;
+    // A brute barely rocks; everything else reels back and drops a lunge.
+    if (z.type === 'brute') z.jolt(dir, 1.5);
+    else z.shove(dir, params.shoveForce);
+    z.health -= 8;
+    hit = true;
+  }
+  if (hit) {
+    sound.thump(player.pos.clone().addScaledVector(dir, 0.8));
+    shake = Math.max(shake, params.cameraShake);
+  }
+};
 
 // Walking over supplies. A medkit is left lying if you're already at full health.
 const pickupNote = document.getElementById('pickup-note');
@@ -131,11 +152,14 @@ function notePickup(text, kind) {
   pickupNoteTimer = setTimeout(() => (pickupNote.hidden = true), 1600);
 }
 function takePickup(type) {
-  if (type === 'ammo') {
-    sound.pickup('ammo');
-    player.reserve += params.ammoPickup;
-    notePickup(`+${params.ammoPickup} ROUNDS`, 'ammo');
-    if (player.ammo === 0 && params.autoReload) player.startReload(); // ran dry before this
+  if (type === 'ammo' || type === 'pistolAmmo') {
+    const kind = type === 'ammo' ? 'rifle' : 'pistol';
+    const n = kind === 'rifle' ? params.ammoPickup : params.pistolAmmoPickup;
+    sound.pickup(type);
+    player.reserves[kind] += n;
+    notePickup(`+${n} ${kind.toUpperCase()} ROUNDS`, 'ammo');
+    // Ran dry with this gun in hand: reload straight away.
+    if (player.weapon.def.ammo === kind && player.rounds === 0 && params.autoReload) player.startReload();
     return true;
   }
   if (player.health >= params.maxHealth) return false;
@@ -294,7 +318,7 @@ if (DEV) {
 
 // A shot hits whichever is nearest along the ray: a crate or a zombie.
 let shake = 0;
-player.onShot = (muzzle, dir) => {
+player.onShot = (muzzle, dir, damage) => {
   let distance = effects.raycastObstacles(muzzle, dir);
   let kind = distance < Infinity ? 'wall' : null;
   // Shooting down from a car: the road stops the bullet.
@@ -316,13 +340,13 @@ player.onShot = (muzzle, dir) => {
     }
   }
   effects.shot(muzzle, dir, distance, kind);
-  sound.gunshot(muzzle);
+  sound.gunshot(muzzle, player.weapon.name === 'pistol');
   if (kind === 'wall') sound.wallHit(muzzle.clone().addScaledVector(dir, distance));
   if (target) {
     const hitPoint = muzzle.clone().addScaledVector(dir, distance);
     gore.spray(hitPoint, dir, headshot ? 24 : 10, headshot ? 3.5 : 2.5);
     const wasDead = target.dead;
-    target.takeHit(dir, params.bulletDamage * (headshot ? params.headshotMultiplier : 1), targetHit);
+    target.takeHit(dir, damage * (headshot ? params.headshotMultiplier : 1), targetHit);
     sound.fleshHit(hitPoint, headshot);
     if (!wasDead && target.dead) kills++;
   }
@@ -370,7 +394,7 @@ function updateWorld(dt, input) {
     const m = Math.floor(runTime / 60);
     const s = Math.floor(runTime % 60).toString().padStart(2, '0');
     document.getElementById('won-sub').textContent =
-      `Time ${m}:${s} · ${kills} killed · ${Math.round(player.health)} health · ${player.ammo + player.reserve} rounds left`;
+      `Time ${m}:${s} · ${kills} killed · ${Math.round(player.health)} health · ${Object.values(player.weapons).reduce((n, w) => n + w.ammo + (w.chambered ? 1 : 0), 0) + player.reserves.rifle + player.reserves.pistol} rounds left`;
     document.getElementById('won').hidden = false;
     sound.escaped();
   }
@@ -469,6 +493,9 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'Space') jumpQueued = true; // vault/climb when not grabbed
   if (e.code === 'Enter' && (player.state === 'dead' || escaped)) restart();
   if (e.code === 'KeyR') player.startReload();
+  if (e.code === 'Digit1') player.switchWeapon('rifle');
+  if (e.code === 'Digit2') player.switchWeapon('pistol');
+  if (e.code === 'KeyQ') player.switchWeapon(player.switchTo ? player.weapon.name : player.otherWeapon());
   if (e.code === 'KeyP') params.paused = !params.paused;
   if (e.code === 'KeyF') player.toggleFlashlight();
   if (e.code === 'KeyV') cycleVisibility();
@@ -495,6 +522,7 @@ renderer.domElement.addEventListener('pointermove', (e) => {
 let triggerHeld = false;
 renderer.domElement.addEventListener('pointerdown', (e) => {
   if (e.button === 0) triggerHeld = true;
+  if (e.button === 2 && started) player.startShove();
 });
 window.addEventListener('pointerup', (e) => {
   if (e.button === 0) triggerHeld = false;
@@ -517,12 +545,14 @@ const aimPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -1.2); // gun heigh
 const aimHit = new THREE.Vector3();
 const held = (...codes) => (codes.some((c) => keys.has(c)) ? 1 : 0);
 
+let lastAim = null;
 function readInput() {
   let aimPoint = null;
   if (hasMouse) {
     raycaster.setFromCamera(mouse, camera);
     if (raycaster.ray.intersectPlane(aimPlane, aimHit)) aimPoint = aimHit;
   }
+  lastAim = aimPoint;
   // Camera looks toward +Z, so screen-right is world -X.
   return {
     x: held('KeyA', 'ArrowLeft') - held('KeyD', 'ArrowRight'),
@@ -582,6 +612,8 @@ const ui = {
   biteFill: document.getElementById('bite-fill'),
   objective: document.getElementById('objective'),
   ammo: document.getElementById('ammo'),
+  ammoWeapon: document.querySelector('#ammo .weapon'),
+  reticle: document.getElementById('reticle'),
   ammoMag: document.querySelector('#ammo .mag'),
   ammoReserve: document.querySelector('#ammo .reserve'),
   ammoState: document.querySelector('#ammo .state'),
@@ -607,22 +639,42 @@ function updateUI(real) {
   if (hint) ui.parkour.innerHTML = `<b>SPACE</b> · ${hint.toUpperCase()}`;
 
   // Ammo: what's in the gun, what's left to reload, and what to do about it.
-  ui.ammoMag.textContent = player.magState === 'gun' ? player.ammo : '–';
+  const other = player.weapons[player.otherWeapon()];
+  ui.ammoWeapon.innerHTML = `${(player.switchTo ? player.weapons[player.switchTo] : player.weapon).def.label} <span>· ${other.def.slot} ${other.def.label.toLowerCase()}</span>`;
+  ui.ammoMag.textContent = player.magState === 'gun' ? player.rounds : '–';
   ui.ammoReserve.textContent = player.reserve;
   let ammoState = '';
   let ammoClass = '';
   if (player.reload.active) ammoState = 'RELOADING';
-  else if (player.ammo === 0 && player.reserve > 0) {
+  else if (player.switchTo) ammoState = 'SWITCHING';
+  else if (player.rounds === 0 && player.reserve > 0) {
     ammoState = 'RELOAD · R';
     ammoClass = 'low';
-  } else if (player.ammo === 0) {
-    ammoState = 'OUT OF AMMO';
+  } else if (player.rounds === 0) {
+    // Nothing left for this gun: say so, and whether the other one has any.
+    const otherLeft = other.ammo + (other.chambered ? 1 : 0) + player.reserves[other.def.ammo];
+    ammoState = otherLeft > 0 ? 'OUT OF AMMO · Q' : 'OUT OF AMMO';
     ammoClass = 'empty';
-  } else if (player.ammo <= params.magSize * 0.25) ammoClass = 'low';
+  } else if (player.rounds <= player.magSize * 0.25) ammoClass = 'low';
   if (player.dryFire) ammoClass = 'empty';
   ui.ammoState.textContent = ammoState;
   ui.ammo.className = ammoClass;
   ui.ammo.hidden = player.state === 'dead';
+
+  // The reticle: a ring at the cursor as wide as the cone a shot can go in.
+  const aiming = started && player.state !== 'dead' && !escaped && hasMouse && lastAim;
+  ui.reticle.hidden = !aiming;
+  renderer.domElement.style.cursor = aiming ? 'none' : '';
+  if (aiming) {
+    const dist = Math.max(lastAim.distanceTo(player.gunPos), 0.5);
+    const radius = dist * Math.tan(player.spreadNow * DEG);
+    const a = lastAim.clone().project(camera);
+    const b = lastAim.clone().add(new THREE.Vector3(radius, 0, 0)).project(camera);
+    const px = Math.max(Math.abs(b.x - a.x) * window.innerWidth * 0.5, 4);
+    ui.reticle.style.transform = `translate(${(a.x * 0.5 + 0.5) * window.innerWidth}px, ${(-a.y * 0.5 + 0.5) * window.innerHeight}px)`;
+    ui.reticle.style.setProperty('--r', `${px}px`);
+    ui.reticle.classList.toggle('busy', !player.weaponReady || player.reload.active);
+  }
 
   const toGoal = Math.max(player.pos.distanceTo(level.goal.pos) - level.goal.radius, 0);
   ui.objective.textContent = escaped ? 'EXTRACTED' : `EXTRACTION ▲ ${Math.round(toGoal)} m`;

@@ -2,28 +2,17 @@ import * as THREE from 'three';
 import { Humanoid } from './humanoid.js';
 import { traversalTiming } from './traversal.js';
 import { Ragdoll } from './ragdoll.js';
+import { WEAPONS, HOLSTERS, buildWeaponMeshes } from './weapons.js';
 import { DEG, wrapAngle, dampAngle, damp, localPoint, localDir, quatFrom } from './rig-utils.js';
 
 const _v1 = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
 const _q1 = new THREE.Quaternion();
 
-// Points in gun space: (right, up, forward).
-const GRIP = [0, -0.1, -0.05];
-const SUPPORT = [0, -0.08, 0.24];
-const MAG_SEAT = [0, -0.13, 0.08];
-const MAG_IN_HAND_UP = 0.09;
-
-// Each reload stage is a target for the left hand. The next stage only starts
-// once the hand actually touches the target (contact-gated), not after a timer.
-const RELOAD_STEPS = [
-  { name: 'Eject the old mag', frame: 'gun', p: [0, -0.18, 0.16], start: 'eject' },
-  { name: 'Reach the left hip', frame: 'pelvis', p: [-0.21, 0.02, 0.06] },
-  { name: 'Grip the new mag', frame: 'pelvis', p: [-0.21, -0.02, 0.06], end: 'take', minTime: 0.12 },
-  { name: 'Align below the port', frame: 'gun', p: [0, -0.4, 0.08] },
-  { name: 'Seat the mag', frame: 'gun', p: [0, -0.22, 0.08], end: 'seat' },
-  { name: 'Restore the support grip', frame: 'gun', p: SUPPORT },
-];
+const HOLSTER_TIME = 0.2; // seconds to put a gun away
+const DRAW_TIME = 0.25; // and to bring the next one up
+const SHOVE_TIME = 0.38;
+const SHOVE_HIT = 0.1; // when in the thrust it connects
 
 // Unit cone, apex at the origin, opening along +Z to radius 1 at z = 1.
 const BEAM_GEOMETRY = new THREE.ConeGeometry(1, 1, 40, 1, true)
@@ -83,17 +72,20 @@ export class Player extends Humanoid {
 
     this.gunPos = new THREE.Vector3();
     this.gunQuat = new THREE.Quaternion();
-    this.reload = { active: false, step: -1, t: 0, label: 'Ready' };
+    this.reload = { active: false, step: -1, t: 0, label: 'Ready', steps: [] };
     this.magState = 'gun';
     this.drops = [];
 
     // Recoil is a set of springs on the gun: kick back, muzzle climb, sideways yaw.
     this.recoil = { back: 0, backVel: 0, pitch: 0, pitchVel: 0, yaw: 0, yawVel: 0 };
-    this.ammo = params.magSize;
-    this.reserve = params.startReserve; // spare rounds to reload from
     this.dryFire = false; // trigger pulled on an empty gun with nothing to reload
     this.fireCooldown = 0;
-    this.onShot = null; // (muzzle: Vector3, dir: Vector3) => void
+    this.triggerWas = false;
+    this.bloom = 0; // extra spread from firing fast (degrees), recovers over time
+    this.spreadNow = params.spread; // the cone a shot can go in right now (degrees)
+    this.onShot = null; // (muzzle: Vector3, dir: Vector3, damage: number) => void
+    this.onShove = null; // (dir: Vector3) => void, at the moment a shove connects
+    this.onWeaponEvent = null; // ('holster' | 'draw' | 'shove') => void, for sounds
     this.moveMode = 'jog';
     this.aimPitch = 0;
     this.parkourHint = null; // 'vault' | 'climb' | null
@@ -104,7 +96,8 @@ export class Player extends Humanoid {
     this.stun = 0; // knocked back and reeling: no control for a moment
     this.deathPos = new THREE.Vector3();
 
-    this._buildGun();
+    this._buildGuns();
+    this._resetWeapons();
     this._settle();
   }
 
@@ -121,18 +114,13 @@ export class Player extends Humanoid {
     for (const d of this.drops) this.body.remove(d.mesh);
     this.drops = [];
     this._buildBody(PLAYER_LOOK);
-    this._buildGun();
+    this._buildGuns();
+    this._resetWeapons();
     this.pos.copy(spawn);
     this.vel.set(0, 0, 0);
     this.accel.set(0, 0, 0);
     this.lean.set(0, 0);
     this.leanVel.set(0, 0);
-    Object.assign(this.recoil, { back: 0, backVel: 0, pitch: 0, pitchVel: 0, yaw: 0, yawVel: 0 });
-    Object.assign(this.reload, { active: false, step: -1, t: 0, label: 'Ready' });
-    this.magState = 'gun';
-    this.ammo = this.params.magSize;
-    this.reserve = this.params.startReserve;
-    this.dryFire = false;
     this.health = this.params.maxHealth;
     this.state = 'normal';
     this.grabbedBy = null;
@@ -145,56 +133,142 @@ export class Player extends Humanoid {
     this._settle();
   }
 
-  _buildGun() {
-    const mat = (color, roughness) => new THREE.MeshStandardMaterial({ color, roughness });
-    const m = this.materials;
-    m.gun = mat('#1e2024', 0.45);
-    m.gunAccent = mat('#3a3d44', 0.5);
-    m.mag = mat('#d39b2a', 0.6);
-    const box = this.box;
+  // ---------------------------------------------------------------- guns
 
-    this.gun = new THREE.Group();
-    box(this.gun, m.gun, 0.06, 0.09, 0.42, 0, 0, 0.08);
-    box(this.gun, m.gunAccent, 0.05, 0.1, 0.18, 0, -0.02, -0.21);
-    box(this.gun, m.gun, 0.035, 0.1, 0.045, 0, -0.08, -0.05).rotation.x = -0.3;
-    box(this.gun, m.gun, 0.03, 0.06, 0.035, 0, -0.075, 0.24);
-    const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.22, 10), m.gunAccent);
-    barrel.rotation.x = Math.PI / 2;
-    barrel.position.set(0, 0.01, 0.4);
-    barrel.castShadow = true;
-    this.gun.add(barrel);
-    this.body.add(this.gun);
+  _buildGuns() {
+    this.lensMaterial = new THREE.MeshBasicMaterial({ color: '#fff6dc' });
+    this.weapons = {};
+    for (const name of Object.keys(WEAPONS)) {
+      const meshes = buildWeaponMeshes(name, this.lensMaterial);
+      this.body.add(meshes.group, meshes.mag);
+      this.weapons[name] = { name, def: WEAPONS[name], ...meshes, ammo: 0, chambered: false, slideBack: 0, slideLocked: false };
+    }
 
-    // Flashlight under the barrel. Parented to the gun so the beam follows
+    // One flashlight, clipped to whichever gun is in hand so the beam follows
     // the aim and every bit of recoil.
-    const torch = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.12, 10), m.gunAccent);
-    torch.rotation.x = Math.PI / 2;
-    torch.position.set(0, -0.045, 0.36);
-    this.gun.add(torch);
-    this.lens = new THREE.Mesh(
-      new THREE.CircleGeometry(0.018, 12),
-      new THREE.MeshBasicMaterial({ color: '#fff6dc' }),
-    );
-    this.lens.position.set(0, -0.045, 0.421);
-    this.gun.add(this.lens);
-
     this.flashlight = new THREE.SpotLight('#fff1d6', 0, 24, 0.37, 0.55, 1.3);
-    this.flashlight.position.set(0, -0.045, 0.43);
-    this.flashlight.target.position.set(0, -0.045, 6);
     this.flashlight.castShadow = true;
     this.flashlight.shadow.mapSize.set(1024, 1024);
     this.flashlight.shadow.camera.near = 0.2;
     this.flashlight.shadow.bias = -0.0004;
     this.flashlight.shadow.normalBias = 0.02;
-    this.gun.add(this.flashlight, this.flashlight.target);
-
     this.beam = new THREE.Mesh(BEAM_GEOMETRY, BEAM_MATERIAL);
-    this.beam.position.copy(this.flashlight.position);
-    this.gun.add(this.beam);
 
-    this.mag = box(this.body, m.mag, 0.04, 0.16, 0.07);
     this.casingGeo = new THREE.CylinderGeometry(0.006, 0.006, 0.03, 6).rotateX(Math.PI / 2);
     this.casingMat = new THREE.MeshStandardMaterial({ color: '#d9b45a', metalness: 0.8, roughness: 0.35 });
+  }
+
+  // Full mags (and a round chambered), the rifle in hand.
+  _resetWeapons() {
+    const p = this.params;
+    for (const w of Object.values(this.weapons)) {
+      w.ammo = w.def.stat.magSize ?? p.magSize;
+      w.chambered = w.def.chamber;
+      w.slideLocked = false;
+      w.slideBack = 0;
+    }
+    this.reserves = { rifle: p.startReserve, pistol: p.startPistolReserve ?? 15 };
+    Object.assign(this.recoil, { back: 0, backVel: 0, pitch: 0, pitchVel: 0, yaw: 0, yawVel: 0 });
+    Object.assign(this.reload, { active: false, step: -1, t: 0, label: 'Ready', steps: [] });
+    this.magState = 'gun';
+    this.dryFire = false;
+    this.bloom = 0;
+    this.switchTo = null;
+    this.drawBlend = 1; // 1 = gun up and ready, 0 = put away
+    this.shoveT = -1;
+    this.shoveCooldown = 0;
+    this._equip('rifle');
+  }
+
+  _equip(name) {
+    this.weapon = this.weapons[name];
+    const def = this.weapon.def;
+    this.flashlight.position.set(0, name === 'rifle' ? -0.045 : -0.033, def.torch);
+    this.flashlight.target.position.set(0, this.flashlight.position.y, def.torch + 6);
+    this.beam.position.copy(this.flashlight.position);
+    this.weapon.group.add(this.flashlight, this.flashlight.target, this.beam);
+  }
+
+  // A lever for the gun in hand: its own value if it has one, else the panel's.
+  stat(key) {
+    return this.weapon.def.stat[key] ?? this.params[key];
+  }
+
+  get gun() {
+    return this.weapon.group;
+  }
+  get mag() {
+    return this.weapon.mag;
+  }
+  get ammo() {
+    return this.weapon.ammo;
+  }
+  set ammo(v) {
+    this.weapon.ammo = v;
+  }
+  get magSize() {
+    return this.stat('magSize');
+  }
+  // Rounds ready to fire: the mag, plus the one in the chamber.
+  get rounds() {
+    return this.weapon.ammo + (this.weapon.def.chamber && this.weapon.chambered ? 1 : 0);
+  }
+  get reserve() {
+    return this.reserves[this.weapon.def.ammo];
+  }
+  set reserve(v) {
+    this.reserves[this.weapon.def.ammo] = v;
+  }
+  get weaponReady() {
+    return !this.switchTo && this.drawBlend >= 0.999 && this.shoveT < 0;
+  }
+
+  // Put the gun in hand away and draw another (1/2 or Q). Not mid-reload,
+  // mid-climb or while something has hold of you.
+  switchWeapon(name) {
+    if (!this.weapons[name] || this.state !== 'normal' || this.traversal || this.reload.active) return;
+    if (name === this.weapon.name && !this.switchTo) return;
+    if (this.switchTo !== name) this.onWeaponEvent?.('holster');
+    this.switchTo = name === this.weapon.name ? null : name;
+  }
+
+  otherWeapon() {
+    return Object.keys(this.weapons).find((n) => n !== this.weapon.name);
+  }
+
+  // Shove whatever is in front with the gun (right click): a short thrust
+  // that knocks zombies back and stops a lunge. A brief cooldown.
+  startShove() {
+    if (this.shoveT >= 0 || this.shoveCooldown > 0 || this.state !== 'normal' || this.traversal) return;
+    if (this.reload.active || this.switchTo || this.stun > 0) return;
+    this.shoveT = 0;
+    this.shoveHit = false;
+    this.shoveCooldown = this.params.shoveCooldown ?? 0.8;
+    this.onWeaponEvent?.('shove');
+  }
+
+  _updateHands(dt) {
+    // Holstering, then drawing.
+    if (this.switchTo) {
+      this.drawBlend = Math.max(this.drawBlend - dt / HOLSTER_TIME, 0);
+      if (this.drawBlend <= 0) {
+        this._equip(this.switchTo);
+        this.switchTo = null;
+        this.bloom = 0;
+        this.onWeaponEvent?.('draw');
+      }
+    } else {
+      this.drawBlend = Math.min(this.drawBlend + dt / DRAW_TIME, 1);
+    }
+    this.shoveCooldown = Math.max(this.shoveCooldown - dt, 0);
+    if (this.shoveT >= 0) {
+      this.shoveT += dt;
+      if (!this.shoveHit && this.shoveT >= SHOVE_HIT) {
+        this.shoveHit = true;
+        this.onShove?.(_v1.set(Math.sin(this.aimYaw), 0, Math.cos(this.aimYaw)));
+      }
+      if (this.shoveT >= SHOVE_TIME || this.state !== 'normal') this.shoveT = -1;
+    }
   }
 
   // ---------------------------------------------------------------- update
@@ -225,7 +299,8 @@ export class Player extends Humanoid {
     if (_v1.lengthSq() > 1) _v1.normalize();
 
     // Vault/climb toward where you're moving, or where you're facing if still.
-    const canParkour = !grabbed && this.state === 'normal' && !this.reload.active && this.vy === 0 && this.stun <= 0;
+    const canParkour =
+      !grabbed && this.state === 'normal' && !this.reload.active && this.vy === 0 && this.stun <= 0 && !this.switchTo;
     if (_v1.lengthSq() > 0.01) _v2.copy(_v1).normalize();
     else _v2.set(Math.sin(this.aimYaw), 0, Math.cos(this.aimYaw));
     const ledge = canParkour ? Humanoid.terrain.findLedge(this.pos, _v2) : null;
@@ -234,6 +309,7 @@ export class Player extends Humanoid {
       // Vault one-handed with the gun kept; climb with both hands, gun swung aside.
       this.startTraversal(ledge, traversalTiming(ledge, this.pos.y));
       this.parkourHint = null;
+      this.shoveT = -1;
       // Start moving this frame; skipping it is a one-frame stall.
       this._updateTraversal(dt);
       this._updateRecoil(dt);
@@ -245,7 +321,7 @@ export class Player extends Humanoid {
     }
     // Walk wins over sprint so a careful player is never surprised.
     this.moveMode = input.walk ? 'walk' : input.sprint ? 'sprint' : 'jog';
-    const topSpeed = { walk: p.walkSpeed, jog: p.jogSpeed, sprint: p.runSpeed }[this.moveMode];
+    const topSpeed = { walk: p.walkSpeed, jog: p.jogSpeed, sprint: p.runSpeed }[this.moveMode] * this.weapon.def.moveSpeed;
     // Held in place while grabbed; knocked back, you slide with the blow.
     this.stun = Math.max(this.stun - dt, 0);
     const reeling = this.stun > 0;
@@ -268,6 +344,7 @@ export class Player extends Humanoid {
     this.aimYaw = dampAngle(this.aimYaw, aimTarget, p.aimTurnRate, dt);
     this.chestYawOffset = p.gunLead * DEG;
 
+    this._updateHands(dt);
     this._updateFiring(dt, input.fire && !grabbed);
     this._updateRecoil(dt);
     this._updateBody(dt);
@@ -282,6 +359,7 @@ export class Player extends Humanoid {
     this.health -= damage;
     this.vel.addScaledVector(dir, speed);
     this.stun = 0.7;
+    this.shoveT = -1;
     this.jolt(dir, speed * 0.8);
   }
 
@@ -292,7 +370,7 @@ export class Player extends Humanoid {
    * neck, waist, shoulders and hips (elbows and knees too, sometimes), and
    * every piece is flung off, mostly toward the zombie pulling that way, each
    * one bleeding from where it tore. `pulls` are ground directions from the
-   * player toward each grabber. The gun goes flying on its own.
+   * player toward each grabber. The guns go flying on their own.
    */
   die(mode, pulls, gore) {
     this.state = 'dead';
@@ -304,11 +382,14 @@ export class Player extends Humanoid {
 
     const up = new THREE.Vector3(0, 1, 0);
     const pull = pulls[0] ?? new THREE.Vector3(0, 0, 1);
-    gore.tear([this.gun, this.magState === 'gun' ? this.mag : null], this.gunPos.clone(), {
-      vel: pull.clone().multiplyScalar(-2).add(new THREE.Vector3(0, 2.5, 0)),
-      angVel: new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(18),
-      rest: 0.04,
-    });
+    for (const w of Object.values(this.weapons)) {
+      const inHand = w === this.weapon;
+      gore.tear([w.group, !inHand || this.magState === 'gun' ? w.mag : null], w.group.position.clone(), {
+        vel: pull.clone().multiplyScalar(inHand ? -2 : -0.8).add(new THREE.Vector3(0, inHand ? 2.5 : 1.5, 0)),
+        angVel: new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(18),
+        rest: 0.04,
+      });
+    }
 
     this.ragdoll = new Ragdoll(this, { vel: this.vel });
     const rd = this.ragdoll;
@@ -338,52 +419,87 @@ export class Player extends Humanoid {
     for (const p of pulls) gore.pool(this.pos.clone().addScaledVector(p, 1.2), 0.7, 6);
   }
 
-  // ---------------------------------------------------------------- weapon
+  // ---------------------------------------------------------------- firing
+
+  _canFire() {
+    const w = this.weapon;
+    return w.def.chamber ? w.chambered : w.ammo > 0;
+  }
 
   _updateFiring(dt, triggerHeld) {
     const p = this.params;
+    const w = this.weapon;
+    const pressed = triggerHeld && !this.triggerWas;
+    this.triggerWas = triggerHeld;
     this.fireCooldown = Math.max(this.fireCooldown - dt, 0);
-    if (!triggerHeld || this.reload.active) return;
+
+    // Accuracy: a tight cone standing still, wider on the move, wider still
+    // while firing fast (it only settles once you ease off the trigger).
+    // Walking (C) steadies it.
+    this.sinceShot = (this.sinceShot ?? 1) + dt;
+    if (this.sinceShot > 0.12) this.bloom = Math.max(this.bloom - this.stat('bloomRecover') * dt, 0);
+    const moving = Math.min(this.speed / p.runSpeed, 1);
+    this.spreadNow = (this.stat('spread') + this.stat('spreadMove') * moving + this.bloom) * (this.moveMode === 'walk' ? 0.75 : 1);
+
+    if (!triggerHeld) this.dryFire = false;
+    if (!triggerHeld || this.reload.active || !this.weaponReady) return;
+    if (!w.def.auto && !pressed) return; // one shot per pull
     this.dryFire = false;
-    if (this.ammo <= 0) {
+    if (!this._canFire()) {
       if (p.autoReload && this.reserve > 0) this.startReload();
       else if (this.reserve <= 0) this.dryFire = true;
       return;
     }
-    while (this.fireCooldown <= 0 && this.ammo > 0) {
+    if (w.def.auto) {
+      while (this.fireCooldown <= 0 && this._canFire()) {
+        this._shoot();
+        this.fireCooldown += 60 / this.stat('fireRate');
+      }
+    } else if (this.fireCooldown <= 0) {
       this._shoot();
-      this.fireCooldown += 60 / p.fireRate;
+      this.fireCooldown = 60 / this.stat('fireRate');
     }
   }
 
   _shoot() {
-    const p = this.params;
+    const w = this.weapon;
+    const def = w.def;
     const r = this.recoil;
-    this.ammo--;
+    // Spend the round: from the mag, or for a pistol the chambered one, with
+    // the slide feeding the next (and locking back on an empty mag).
+    if (def.chamber) {
+      if (w.ammo > 0) w.ammo--;
+      else {
+        w.chambered = false;
+        w.slideLocked = true;
+      }
+      w.slideBack = 1;
+    } else {
+      w.ammo--;
+    }
 
     // Impulses go into velocities; the springs turn them into a kick and a settle.
-    r.backVel += p.recoilKick * (0.85 + Math.random() * 0.3);
-    r.pitchVel += p.recoilClimb * (0.8 + Math.random() * 0.4);
-    r.yawVel += p.recoilYaw * (Math.random() * 2 - 1);
+    r.backVel += this.stat('recoilKick') * (0.85 + Math.random() * 0.3);
+    r.pitchVel += this.stat('recoilClimb') * (0.8 + Math.random() * 0.4);
+    r.yawVel += this.stat('recoilYaw') * (Math.random() * 2 - 1);
 
     // Rock the upper body backwards, against the aim direction.
-    this.leanVel.x -= Math.sin(this.aimYaw) * p.torsoKick;
-    this.leanVel.y -= Math.cos(this.aimYaw) * p.torsoKick;
+    const kick = this.stat('torsoKick');
+    this.leanVel.x -= Math.sin(this.aimYaw) * kick;
+    this.leanVel.y -= Math.cos(this.aimYaw) * kick;
 
-    const muzzle = localPoint(new THREE.Vector3(), this.gunPos, this.gunQuat, 0, 0.01, 0.52);
-    const s = p.spread * DEG;
-    const dir = localDir(
-      new THREE.Vector3(),
-      this.gunQuat,
-      (Math.random() * 2 - 1) * s,
-      (Math.random() * 2 - 1) * s,
-      1,
-    ).normalize();
-    this.onShot?.(muzzle, dir);
+    // Anywhere in the current cone, evenly over its area.
+    const muzzle = localPoint(new THREE.Vector3(), this.gunPos, this.gunQuat, ...def.muzzle);
+    const s = Math.tan(this.spreadNow * DEG) * Math.sqrt(Math.random());
+    const a = Math.random() * Math.PI * 2;
+    const dir = localDir(new THREE.Vector3(), this.gunQuat, Math.cos(a) * s, Math.sin(a) * s, 1).normalize();
+    this.bloom = Math.min(this.bloom + this.stat('bloomPerShot'), this.stat('bloomMax'));
+    this.sinceShot = 0;
+    this.onShot?.(muzzle, dir, this.stat('bulletDamage'));
 
     // Eject a casing out of the right side of the gun.
     const casing = new THREE.Mesh(this.casingGeo, this.casingMat);
-    localPoint(casing.position, this.gunPos, this.gunQuat, 0.04, 0.03, 0.1);
+    localPoint(casing.position, this.gunPos, this.gunQuat, ...def.ejection);
     casing.quaternion.copy(this.gunQuat);
     casing.castShadow = true;
     this.body.add(casing);
@@ -394,30 +510,38 @@ export class Player extends Humanoid {
   }
 
   _updateRecoil(dt) {
-    const p = this.params;
     const r = this.recoil;
-    const k = p.recoilStiffness;
-    const c = 2 * Math.sqrt(k) * p.recoilDampingRatio;
+    const k = this.stat('recoilStiffness');
+    const c = 2 * Math.sqrt(k) * this.stat('recoilDampingRatio');
     r.backVel += (-k * r.back - c * r.backVel) * dt;
     r.pitchVel += (-k * r.pitch - c * r.pitchVel) * dt;
     r.yawVel += (-k * r.yaw - c * r.yawVel) * dt;
     r.back += r.backVel * dt;
-    r.pitch = Math.min(r.pitch + r.pitchVel * dt, p.maxClimb * DEG);
+    r.pitch = Math.min(r.pitch + r.pitchVel * dt, this.stat('maxClimb') * DEG);
     r.yaw += r.yawVel * dt;
+    // The pistol's slide snaps back and forward, or stays locked open.
+    for (const w of Object.values(this.weapons)) {
+      if (!w.slide) continue;
+      w.slideBack = w.slideLocked ? 1 : Math.max(w.slideBack - dt * 22, 0);
+    }
   }
 
   // ---------------------------------------------------------------- reload
 
-  // Nothing to reload from, or nothing to gain: the mag stays in.
+  // Nothing to reload from, or nothing to gain: the mag stays in. A pistol
+  // reloaded from empty adds racking the slide to chamber a round.
   startReload() {
-    if (this.reload.active || this.reserve <= 0 || this.ammo >= this.params.magSize) return;
+    const w = this.weapon;
+    if (this.reload.active || !this.weaponReady || this.reserve <= 0) return;
+    if (w.ammo >= this.magSize && (!w.def.chamber || w.chambered)) return;
+    this.reload.steps = w.def.reload(w.def.chamber && !w.chambered);
     this.reload.active = true;
     this._startReloadStep(0);
   }
 
   _startReloadStep(i) {
     const r = this.reload;
-    if (i >= RELOAD_STEPS.length) {
+    if (i >= r.steps.length) {
       r.active = false;
       r.step = -1;
       r.label = 'Ready';
@@ -425,15 +549,15 @@ export class Player extends Humanoid {
     }
     r.step = i;
     r.t = 0;
-    r.label = `${i + 1}/${RELOAD_STEPS.length} ${RELOAD_STEPS[i].name}`;
-    if (RELOAD_STEPS[i].start) this._reloadEvent(RELOAD_STEPS[i].start);
+    r.label = `${i + 1}/${r.steps.length} ${r.steps[i].name}`;
+    if (r.steps[i].start) this._reloadEvent(r.steps[i].start);
   }
 
   _updateReload(dt) {
     const r = this.reload;
     if (!r.active) return;
     r.t += dt;
-    const step = RELOAD_STEPS[r.step];
+    const step = r.steps[r.step];
     const touching = this.hands.left.error < this.params.contactTolerance;
     if ((touching && r.t >= (step.minTime ?? 0.06)) || r.t > 2.5) {
       if (step.end) this._reloadEvent(step.end);
@@ -443,10 +567,11 @@ export class Player extends Humanoid {
 
   _reloadEvent(name) {
     this.onReloadEvent?.(name);
+    const w = this.weapon;
     if (name === 'eject') {
-      const drop = new THREE.Mesh(this.mag.geometry, this.materials.mag);
-      drop.position.copy(this.mag.position);
-      drop.quaternion.copy(this.mag.quaternion);
+      const drop = new THREE.Mesh(w.mag.geometry, w.mag.material);
+      drop.position.copy(w.mag.position);
+      drop.quaternion.copy(w.mag.quaternion);
       drop.castShadow = true;
       this.body.add(drop);
       this.drops.push({
@@ -458,15 +583,20 @@ export class Player extends Humanoid {
       });
       this.magState = 'none';
       // Rounds left in the old mag go back to the pile (no punishing a top-up).
-      this.reserve += this.ammo;
-      this.ammo = 0;
+      this.reserve += w.ammo;
+      w.ammo = 0;
     } else if (name === 'take') {
       this.magState = 'hand';
     } else if (name === 'seat') {
       this.magState = 'gun';
-      const n = Math.min(this.params.magSize, this.reserve);
+      const n = Math.min(this.magSize, this.reserve);
       this.reserve -= n;
-      this.ammo = n;
+      w.ammo = n;
+    } else if (name === 'rack' && w.ammo > 0) {
+      // Slide forward: the top round goes into the chamber.
+      w.ammo--;
+      w.chambered = true;
+      w.slideLocked = false;
     }
   }
 
@@ -491,34 +621,57 @@ export class Player extends Humanoid {
 
   // ---------------------------------------------------------------- pose hooks
 
+  // Where a gun sits when it's put away: rifle across the back, pistol on the hip.
+  _holsterPose(w, outPos, outQuat) {
+    const h = HOLSTERS[w.def.holster];
+    const [origin, quat] = h.frame === 'chest' ? [this.chestPos, this.chestQuat] : [this.pelvisPos, this.pelvisQuat];
+    localPoint(outPos, origin, quat, ...h.p);
+    outQuat.copy(quat).multiply(h.q);
+  }
+
   _afterFrames() {
     // Recoil: negative pitch raises the muzzle; "back" pulls the gun toward the chest.
-    const p = this.params;
     const r = this.recoil;
+    const w = this.weapon;
     quatFrom(this.gunQuat, this.pitch * 0.15 - r.pitch + this.aimPitch, this.aimYaw + r.yaw, 0);
-    localPoint(this.gunPos, this.chestPos, this.chestQuat, p.gunRight, p.gunUp + r.pitch * 0.05, p.gunFwd - r.back);
-    // Climbing: swing the gun down to hang off the right side, muzzle low.
-    if (this.gunStow > 0) {
-      const s = this.gunStow;
-      localPoint(_v1, this.chestPos, this.chestQuat, 0.25, -0.38, 0.06);
-      this.gunPos.lerp(_v1, s);
-      this.gunQuat.slerp(quatFrom(_q1, 1.25, this.chestYaw + 0.35, 0.2), s);
+    let fwd = this.stat('gunFwd') - r.back;
+    let up = this.stat('gunUp') + r.pitch * 0.05;
+    if (this.shoveT >= 0) {
+      // The shove: thrust out hard, then draw back.
+      const k = this.shoveT < SHOVE_HIT ? this.shoveT / SHOVE_HIT : Math.max(1 - (this.shoveT - SHOVE_HIT) / (SHOVE_TIME - SHOVE_HIT), 0);
+      const s = k * k * (3 - 2 * k);
+      fwd += 0.2 * s;
+      up += 0.06 * s;
     }
-    this.gun.position.copy(this.gunPos);
-    this.gun.quaternion.copy(this.gunQuat);
+    localPoint(this.gunPos, this.chestPos, this.chestQuat, this.stat('gunRight'), up, fwd);
+    // Put away: mid-swap, or slung while climbing.
+    const stow = Math.max(this.gunStow, 1 - this.drawBlend);
+    if (stow > 0) {
+      this._holsterPose(w, _v1, _q1);
+      const s = stow * stow * (3 - 2 * stow);
+      this.gunPos.lerp(_v1, s);
+      this.gunQuat.slerp(_q1, s);
+    }
+    w.group.position.copy(this.gunPos);
+    w.group.quaternion.copy(this.gunQuat);
+    for (const o of Object.values(this.weapons)) {
+      if (o !== w) this._holsterPose(o, o.group.position, o.group.quaternion);
+      if (o.slide) o.slide.position.z = o.slideZ - 0.04 * o.slideBack;
+    }
     this._updateFlashlight();
   }
 
   _updateFlashlight() {
     const p = this.params;
-    const on = p.flashlightOn;
+    // Off while the gun is put away (it points at the ground).
+    const on = p.flashlightOn && this.drawBlend > 0.5 && this.gunStow < 0.5;
     const angle = p.flashAngle * DEG;
     // Intensity 0 rather than visible = false: toggling lights recompiles shaders.
-    this.flashlight.intensity = on ? p.flashIntensity : 0;
+    this.flashlight.intensity = on ? p.flashIntensity * (this.weapon.name === 'pistol' ? 0.8 : 1) : 0;
     this.flashlight.angle = angle;
     this.flashlight.distance = p.flashRange;
     this.flashlight.shadow.camera.far = p.flashRange;
-    this.lens.material.color.set(on ? '#fff6dc' : '#3a3d44');
+    this.lensMaterial.color.set(p.flashlightOn ? '#fff6dc' : '#3a3d44');
     this.beam.visible = on && p.beamOpacity > 0;
     BEAM_MATERIAL.uniforms.opacity.value = p.beamOpacity;
     const length = p.flashRange * 0.55;
@@ -532,28 +685,35 @@ export class Player extends Humanoid {
 
   _setHandTargets() {
     const { left, right } = this.hands;
-    localPoint(right.target, this.gunPos, this.gunQuat, ...GRIP);
+    const def = this.weapon.def;
+    localPoint(right.target, this.gunPos, this.gunQuat, ...def.grip);
     if (this.state === 'grabbed' && this.grabbedBy) {
       // Free hand shoves against the zombie's chest.
       left.target.lerpVectors(this.chestPos, this.grabbedBy.chestPos, 0.75);
     } else if (this.reload.active) {
-      const step = RELOAD_STEPS[this.reload.step];
-      const [origin, quat] =
-        step.frame === 'gun' ? [this.gunPos, this.gunQuat] : [this.pelvisPos, this.pelvisQuat];
+      const step = this.reload.steps[this.reload.step];
+      const [origin, quat] = step.frame === 'gun' ? [this.gunPos, this.gunQuat] : [this.pelvisPos, this.pelvisQuat];
       localPoint(left.target, origin, quat, ...step.p);
+    } else if (this.drawBlend < 0.6) {
+      // Mid-swap the free hand drops to the side.
+      localPoint(left.target, this.chestPos, this.chestQuat, -0.24, -0.42, 0.08);
     } else {
-      localPoint(left.target, this.gunPos, this.gunQuat, ...SUPPORT);
+      localPoint(left.target, this.gunPos, this.gunQuat, ...def.support);
     }
   }
 
   _afterPose() {
-    this.mag.visible = this.magState !== 'none';
-    if (this.magState === 'gun') {
-      localPoint(this.mag.position, this.gunPos, this.gunQuat, ...MAG_SEAT);
-    } else if (this.magState === 'hand') {
-      this.mag.position.copy(this.arms[0].wrist).add(localDir(_v1, this.gunQuat, 0, MAG_IN_HAND_UP, 0));
+    for (const w of Object.values(this.weapons)) {
+      const def = w.def;
+      const inHand = w === this.weapon;
+      const state = inHand ? this.magState : 'gun';
+      w.mag.visible = state !== 'none';
+      const pos = inHand ? this.gunPos : w.group.position;
+      const quat = inHand ? this.gunQuat : w.group.quaternion;
+      if (state === 'gun') localPoint(w.mag.position, pos, quat, ...def.magSeat);
+      else if (state === 'hand') w.mag.position.copy(this.arms[0].wrist).add(localDir(_v1, quat, 0, def.magInHand, 0));
+      w.mag.quaternion.copy(quat);
     }
-    this.mag.quaternion.copy(this.gunQuat);
   }
 
   // ---------------------------------------------------------------- debug
@@ -577,7 +737,7 @@ export class Player extends Humanoid {
       `lean fwd ${deg(this.pitch)}° side ${deg(this.roll)}°`,
       `${foot(this.feet[0], 'L')}   ${foot(this.feet[1], 'R')}`,
       `hand error  right ${cm(this.hands.right)} cm · left ${cm(this.hands.left)} cm`,
-      `ammo ${this.ammo}/${p.magSize} + ${this.reserve} · recoil back ${(this.recoil.back * 100).toFixed(1)} cm climb ${deg(this.recoil.pitch)}°`,
+      `${this.weapon.def.label} ${this.rounds}/${this.magSize} + ${this.reserve} · spread ${this.spreadNow.toFixed(1)}° · recoil back ${(this.recoil.back * 100).toFixed(1)} cm climb ${deg(this.recoil.pitch)}°`,
       `reload  ${this.reload.label}`,
       `health ${Math.max(Math.round(this.health), 0)}/${p.maxHealth} · ${this.state}`,
     ].join('\n');

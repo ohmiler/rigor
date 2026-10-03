@@ -194,14 +194,38 @@ export class Sound {
 
   // ------------------------------------------------------------ the player's gun
 
-  gunshot(pos) {
-    const o = this._out(pos, 60, 0.9);
+  // `small`: a pistol, a sharper and lighter crack than the rifle.
+  gunshot(pos, small = false) {
+    const o = this._out(pos, 60, small ? 0.7 : 0.9);
     if (!o) return;
-    const p = rand(0.92, 1.08);
+    const p = rand(0.92, 1.08) * (small ? 1.35 : 1);
     this._noise(o, { dur: 0.06, type: 'highpass', freq: 1800 * p, gain: 0.9 }); // crack
     this._noise(o, { dur: 0.22, type: 'lowpass', freq: 1100 * p, freqEnd: 300, gain: 1.1 }); // blast
     this._tone(o, { dur: 0.16, freq: 130 * p, freqEnd: 42, gain: 0.9 }); // thump
     this._noise(o, { at: 0.03, dur: 0.7, type: 'bandpass', freq: 420, q: 0.7, gain: 0.18, attack: 0.04 }); // street echo
+  }
+
+  // Putting a gun away / drawing one: a rustle of the sling or holster and a click.
+  weapon(event) {
+    const o = this._out(null, 0, 0.4);
+    if (!o) return;
+    if (event === 'holster') {
+      this._noise(o, { dur: 0.16, type: 'bandpass', freq: 900, q: 0.8, gain: 0.5, attack: 0.03 });
+    } else if (event === 'draw') {
+      this._noise(o, { dur: 0.12, type: 'bandpass', freq: 1200, q: 0.8, gain: 0.45, attack: 0.02 });
+      this._noise(o, { at: 0.1, dur: 0.04, type: 'bandpass', freq: 2600, q: 5, gain: 0.6 });
+    } else if (event === 'shove') {
+      this._noise(o, { dur: 0.18, type: 'bandpass', freq: 500, freqEnd: 1100, q: 0.8, gain: 0.6, attack: 0.03 }); // whoosh
+      this._voice(o, { dur: 0.2, f0: 130, f0End: 115, formants: [[550, 4, 1], [950, 5, 0.5]], gain: 0.35, rasp: 0.4, attack: 0.01 }); // effort
+    }
+  }
+
+  // The shove landing on a body.
+  thump(pos) {
+    const o = this._out(pos, 20, 0.6);
+    if (!o) return;
+    this._noise(o, { dur: 0.1, type: 'lowpass', freq: 450, gain: 1 });
+    this._tone(o, { dur: 0.1, freq: 95, freqEnd: 60, gain: 0.6 });
   }
 
   dryClick() {
@@ -364,7 +388,7 @@ export class Sound {
   pickup(type) {
     const o = this._out(null, 0, 0.45);
     if (!o) return;
-    if (type === 'ammo') {
+    if (type === 'ammo' || type === 'pistolAmmo') {
       this._noise(o, { dur: 0.04, type: 'bandpass', freq: 2400, q: 5, gain: 0.8 });
       this._noise(o, { at: 0.08, dur: 0.04, type: 'bandpass', freq: 3000, q: 5, gain: 0.7 });
     } else {

@@ -22,6 +22,8 @@
           <li><b>Mouse</b> aim</li>
           <li><b>Left click</b> fire</li>
           <li><b>R</b> reload</li>
+          <li><b>Right click</b> shove</li>
+          <li><b>1 / 2 / Q</b> rifle / pistol / swap</li>
           <li><b>Shift</b> sprint</li>
           <li><b>C</b> walk quietly</li>
           <li><b>Space</b> vault or climb</li>
@@ -32,7 +34,7 @@
           <li><b>M</b> sound on/off</li>
           <li><b>Wheel</b> zoom</li>
         </ul>
-        <p class="tip">Gunfire carries. Every zombie that hears it comes looking.<br />Climb onto a car to get out of reach. They will follow, slowly.<br />Shoot the pale ones before they scream. Keep away from the big ones' fists.<br />Shoot their legs and they crawl.</p>
+        <p class="tip">Stand still to shoot straight; on the run your shots spray.<br />Gunfire carries. Every zombie that hears it comes looking.<br />Climb onto a car to get out of reach. They will follow, slowly.<br />Shoot the pale ones before they scream. Keep away from the big ones' fists.<br />Shoot their legs and they crawl.</p>
         <div class="buttons">
           <button id="play-fullscreen" type="button" class="primary">Play fullscreen</button>
           <button id="play-window" type="button">Play in a window</button>
@@ -43,7 +45,9 @@
     </div>
     <div id="health"><div id="health-fill"></div></div>
     <div id="objective"></div>
+    <div id="reticle" hidden><i></i><i></i><i></i><i></i></div>
     <div id="ammo">
+      <div class="weapon"></div>
       <span class="mag">30</span><span class="reserve">30</span>
       <div class="state"></div>
     </div>
@@ -68,7 +72,7 @@
     <div id="hud">
       <pre id="stats" class="dev-only"></pre>
       <div class="keys">
-        <b>WASD</b> move · <b>Mouse</b> aim · <b>LMB</b> fire · <b>Shift</b> sprint · <b>C</b> walk · <b>R</b> reload · <b>Space</b> vault / climb / struggle ·
+        <b>WASD</b> move · <b>Mouse</b> aim · <b>LMB</b> fire · <b>Shift</b> sprint · <b>C</b> walk · <b>R</b> reload · <b>RMB</b> shove · <b>1/2/Q</b> weapons · <b>Space</b> vault / climb / struggle ·
         <span class="dev-only"><b>N</b> spawn zombies · <b>T</b> slow-mo · <b>B</b> skeleton · </span>
         <b>P</b> pause · <b>M</b> sound · <b>F</b> flashlight · <b>V</b> visibility · <b>Wheel</b> zoom
       </div>

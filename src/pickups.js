@@ -8,7 +8,10 @@ import * as THREE from 'three';
 const LOOKS = {
   ammo: { body: '#4f5a32', trim: '#d8b23a', halo: '#ffc85a', chance: 0.75 },
   medkit: { body: '#e9e6df', trim: '#c8302f', halo: '#ff6b6b', chance: 0.8 },
+  pistolAmmo: { body: '#8a6a44', trim: '#e3dccb', halo: '#ffc85a', chance: 0.75 },
 };
+// An ammo spot holds rifle or pistol rounds, rolled each run.
+const PISTOL_SHARE = 0.45;
 
 const haloGeometry = new THREE.RingGeometry(0.22, 0.42, 32).rotateX(-Math.PI / 2);
 
@@ -29,6 +32,10 @@ function buildMesh(type) {
     box(mat(look.body, 0.2), 0.32, 0.18, 0.16, 0, 0.09, 0);
     box(mat(look.trim, 0.5), 0.325, 0.03, 0.165, 0, 0.12, 0);
     box(mat('#2a2f1c', 0.1), 0.14, 0.02, 0.03, 0, 0.19, 0);
+  } else if (type === 'pistolAmmo') {
+    // A small cardboard box of pistol rounds.
+    box(mat(look.body, 0.15), 0.2, 0.08, 0.13, 0, 0.04, 0);
+    box(mat(look.trim, 0.3), 0.205, 0.02, 0.135, 0, 0.06, 0);
   } else {
     // A white kit with a red cross on the lid.
     box(mat(look.body, 0.25), 0.3, 0.14, 0.22, 0, 0.07, 0);
@@ -53,22 +60,32 @@ function buildMesh(type) {
 }
 
 export class Pickups {
-  /** `spots`: [{ type: 'ammo' | 'medkit', pos: Vector3 }] from the level. */
+  /** `spots`: [{ type: 'ammo' | 'medkit', pos: Vector3 }] from the level. An
+   * 'ammo' spot turns up rifle or pistol rounds. */
   constructor(scene, spots) {
     this.items = spots.map((spot) => {
-      const { group, halo } = buildMesh(spot.type);
+      // An ammo spot gets both boxes built; reset() shows one.
+      const kinds = spot.type === 'ammo' ? ['ammo', 'pistolAmmo'] : [spot.type];
+      const looks = {};
       const root = new THREE.Group();
       root.position.copy(spot.pos);
-      root.add(group, halo);
+      for (const k of kinds) {
+        looks[k] = buildMesh(k);
+        root.add(looks[k].group, looks[k].halo);
+      }
       scene.add(root);
-      return { ...spot, root, group, halo, active: false, phase: Math.random() * Math.PI * 2 };
+      return { ...spot, spotType: spot.type, looks, root, group: null, halo: null, active: false, phase: Math.random() * Math.PI * 2 };
     });
     this.reset();
   }
 
-  // A new run: roll which spots have something in them.
+  // A new run: roll which spots have something in them, and what.
   reset() {
     for (const it of this.items) {
+      it.type = it.spotType === 'ammo' && Math.random() < PISTOL_SHARE ? 'pistolAmmo' : it.spotType;
+      for (const [k, look] of Object.entries(it.looks)) look.group.visible = look.halo.visible = k === it.type;
+      it.group = it.looks[it.type].group;
+      it.halo = it.looks[it.type].halo;
       it.active = Math.random() < LOOKS[it.type].chance;
       it.root.visible = it.active;
     }

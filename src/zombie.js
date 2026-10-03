@@ -254,7 +254,8 @@ export class Zombie extends Humanoid {
     if (this.screaming > 0) _desired.set(0, 0, 0);
 
     this.aimYaw = dampAngle(this.aimYaw, faceYaw, p.turnRate, dt);
-    this._locomote(dt, _desired);
+    this.knockT = Math.max((this.knockT ?? 0) - dt, 0);
+    this._locomote(dt, _desired, this.knockT > 0 ? 0.25 : 1);
 
     // Posture: hunched forward with the head craned up to look ahead, and the
     // whole body dipping toward the bad leg while it's taking weight.
@@ -404,7 +405,9 @@ export class Zombie extends Humanoid {
       return;
     }
     this.jolt(dir, strength);
-    this.vel.addScaledVector(dir, strength * 0.7);
+    // Thrown back: it slides with the blow for a moment before its feet catch.
+    this.vel.copy(dir).setY(0).multiplyScalar(strength * 0.7);
+    this.knockT = 0.45;
   }
 
   // Dead: the body goes limp from the pose it was in, carrying its momentum,

@@ -68,7 +68,16 @@ export const DEFAULTS = {
   ammoPickup: 15, // rounds in an ammo box
   medkitHeal: 35, // health from a medkit (left lying if you're already at full)
   autoReload: true,
-  spread: 1.0, // degrees of random cone
+  spread: 1.0, // degrees of random cone, standing still
+  spreadMove: 3.5, // extra degrees at a full sprint
+  bloomPerShot: 0.35, // extra degrees per shot, firing fast...
+  bloomMax: 4.5,
+  bloomRecover: 8, // ...recovering this many degrees a second once you stop
+  startPistolReserve: 15, // spare pistol rounds at the start of a run
+  pistolAmmoPickup: 12, // rounds in a box of pistol ammo
+  shoveCooldown: 0.8,
+  shoveRange: 1.3, // how far the shove reaches (metres)
+  shoveForce: 3, // how hard it knocks zombies back
   recoilKick: 1.4, // backward velocity impulse per shot (m/s)
   recoilClimb: 7, // muzzle-up angular impulse per shot (rad/s)
   recoilYaw: 2.5, // random sideways angular impulse (rad/s)
