@@ -251,11 +251,12 @@ export class Sound {
     this._tone(o, { dur: 0.12, freq: 90, freqEnd: 50, gain: 0.7 });
   }
 
-  // Wandering: a low moan. Chasing: louder and rougher.
-  groan(pos, angry = false) {
+  // Wandering: a low moan. Chasing: louder and rougher. `pitch` sets the
+  // voice: a runner's is higher and thinner, a brute's a deep rumble.
+  groan(pos, angry = false, pitch = 1) {
     const o = this._out(pos, angry ? 26 : 18, angry ? 0.45 : 0.3);
     if (!o) return;
-    const f0 = rand(70, 105) * (angry ? 1.3 : 1);
+    const f0 = rand(70, 105) * (angry ? 1.3 : 1) * pitch;
     this._voice(o, {
       dur: rand(0.8, 1.6),
       f0,
@@ -267,11 +268,16 @@ export class Sound {
     });
   }
 
-  // It has seen you.
-  scream(pos) {
-    const o = this._out(pos, 40, 0.6);
+  // It has seen you. A screamer's `big` shriek is long, piercing and carries
+  // down the whole street.
+  scream(pos, pitch = 1, big = false) {
+    const o = this._out(pos, big ? 70 : 40, big ? 0.85 : 0.6);
     if (!o) return;
-    const f0 = rand(230, 300);
+    const f0 = rand(230, 300) * pitch;
+    if (big) {
+      this._voice(o, { dur: 1.6, f0: f0 * 1.2, f0End: f0 * 0.9, formants: [[1200, 3, 1], [2400, 4, 0.8], [3400, 6, 0.4]], gain: 0.9, rasp: 1, vibrato: 9, attack: 0.05 });
+      return;
+    }
     this._voice(o, {
       dur: rand(0.7, 1.0),
       f0,
@@ -290,6 +296,16 @@ export class Sound {
     if (!o) return;
     const f0 = rand(140, 180);
     this._voice(o, { dur: 0.4, f0, f0End: f0 * 1.2, formants: [[700, 3, 1], [1300, 4, 0.6]], gain: 1, rasp: 1, attack: 0.02 });
+  }
+
+  // A brute's fists coming down: a grunt, a whoosh, a heavy thud.
+  slam(pos) {
+    const o = this._out(pos, 30, 0.9);
+    if (!o) return;
+    this._voice(o, { dur: 0.45, f0: 75, f0End: 60, formants: [[500, 4, 1], [900, 5, 0.5]], gain: 0.8, rasp: 0.8, attack: 0.02 });
+    this._noise(o, { dur: 0.18, type: 'bandpass', freq: 600, freqEnd: 200, q: 1, gain: 0.5 });
+    this._noise(o, { at: 0.05, dur: 0.25, type: 'lowpass', freq: 300, gain: 1.1 });
+    this._tone(o, { at: 0.05, dur: 0.25, freq: 70, freqEnd: 35, gain: 1 });
   }
 
   fleshHit(pos, headshot) {

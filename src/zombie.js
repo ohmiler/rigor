@@ -16,6 +16,36 @@ const SHIRTS = ['#6b5a4a', '#4f5d6b', '#7a3e3a', '#5a6b4f', '#8a8576', '#3d4a5c'
 const PANTS = ['#3b3a36', '#2f3a4a', '#4a4036', '#35302b'];
 const HAIR = ['#1f1b17', '#2d241c', '#4a3b2c', null];
 
+// The kinds of zombie. Each overrides some of the shared levers (the rest
+// still follow the panel) and some of the look.
+export const ZOMBIE_TYPES = {
+  // The common shambler.
+  walker: { params: {}, health: 1, legHealth: 1, bulk: 1 },
+  // Fresh and fast: outruns a jog, not a sprint. Rare, frail, terrifying.
+  runner: {
+    params: {
+      chaseSpeed: 3.1, runSpeed: 3.6, acceleration: 9, turnRate: 6, hipTurnRate: 7, legTurnRate: 360,
+      strideBase: 0.9, strideScale: 0.3, dutyRun: 0.42, stepHeight: 0.13, limp: 0.12, detectRange: 14,
+      maxLean: 35, leanSpeed: 0.06, hunch: 28, grabWindup: 0.25, handStiffness: 120,
+    },
+    health: 0.7, legHealth: 0.7, bulk: 0.95,
+    skins: ['#b9b8a4', '#aeb3a0'], shirts: ['#2b2b2b', '#5a1f1f', '#3a2f2a'],
+  },
+  // Huge and slow, soaks bullets. Doesn't grab: it swings, and the blow
+  // throws you. You can't struggle out of that, only keep out of reach.
+  brute: {
+    params: { chaseSpeed: 0.95, hitShove: 0.4, footSpread: 0.17, stepHeight: 0.07, hunch: 12, limp: 0.2, armReach: 0.5, leanStiffness: 50, strideBase: 0.85 },
+    health: 3.5, legHealth: 3, bulk: 1.45,
+    skins: ['#8a947a', '#7f8a74'], shirts: ['#3a4a2a', '#2c2c34', '#4a3a2a'],
+  },
+  // When it sees you it shrieks, and every zombie in earshot comes. Kill it first.
+  screamer: {
+    params: { chaseSpeed: 1.1, detectRange: 15, hunch: 5, limp: 0.3 },
+    health: 0.6, legHealth: 0.8, bulk: 0.9,
+    skins: ['#c8cab9', '#bfc2b0'], shirts: ['#c9c4b8', '#b8a99a'],
+  },
+};
+
 export const HIT_RADIUS = 0.28;
 export const HIT_HEIGHT = 1.75;
 const HEAD_HEIGHT = 1.42;
@@ -26,16 +56,22 @@ const LEG_HEIGHT = 0.8; // hits below this are leg shots
  * a hunched spine, loose arms on soft springs, and a slow turn rate.
  */
 export class Zombie extends Humanoid {
-  constructor(scene, params, position) {
+  constructor(scene, shared, position, type = 'walker') {
+    const kind = ZOMBIE_TYPES[type] ?? ZOMBIE_TYPES.walker;
+    // Its own levers: the type's overrides on top of the shared panel values.
+    const params = Object.assign(Object.create(shared), kind.params);
     const hair = pick(HAIR);
     super(scene, params, {
-      skin: pick(SKINS),
-      shirt: pick(SHIRTS),
+      skin: pick(kind.skins ?? SKINS),
+      shirt: pick(kind.shirts ?? SHIRTS),
       pants: pick(PANTS),
       shoes: '#22201d',
       cap: hair,
       brim: false,
+      bulk: kind.bulk,
     });
+    this.type = type;
+    this.hitRadius = HIT_RADIUS * kind.bulk;
 
     // Per-zombie variation so a crowd never moves in sync.
     this.quirk = {
@@ -51,7 +87,7 @@ export class Zombie extends Humanoid {
 
     this.pos.copy(position);
     this.aimYaw = rand(-Math.PI, Math.PI);
-    this.health = params.health;
+    this.health = params.health * kind.health;
     this.state = 'wander';
     this.wanderTarget = new THREE.Vector3().copy(position);
     this.wanderTimer = 0;
@@ -63,7 +99,10 @@ export class Zombie extends Humanoid {
     this.dead = false;
     this.deathT = 0;
     this.removed = false;
-    this.legHealth = params.legHealth ?? 60;
+    this.legHealth = (params.legHealth ?? 60) * kind.legHealth;
+    this.slamCooldown = 0;
+    this.screamCooldown = 0;
+    this.screaming = 0; // seconds left of a shriek (head back, arms out)
     this.ragdoll = null; // dead, or crawling on its arms with its legs shot out
     this.crawlDelay = 0;
 
@@ -134,11 +173,26 @@ export class Zombie extends Humanoid {
         this.climbTimer = Math.max(this.climbTimer - dt, 0);
       }
 
-      // Close enough: wind up a lunge.
-      if (level && dist < p.attackRange + 0.2 && this.stagger <= 0 && this.grabCooldown <= 0 && grapple.canGrab()) {
+      // A brute winds up a swing; everything else lunges to grab.
+      if (this.type === 'brute') {
+        if (level && dist < 1.4 && this.stagger <= 0 && this.slamCooldown <= 0 && player.state !== 'dead') {
+          this.state = 'slam';
+          this.slamT = 0;
+        }
+      } else if (level && dist < p.attackRange + 0.2 && this.stagger <= 0 && this.grabCooldown <= 0 && grapple.canGrab()) {
         this.state = 'lunge';
         this.lungeT = 0;
         this.jolt(_v2.copy(_v1).normalize(), 2.5);
+      }
+    } else if (this.state === 'slam') {
+      // Arms up, a step in, then the blow lands if you're still there.
+      faceYaw = Math.atan2(_v1.x, _v1.z);
+      this.slamT += dt;
+      if (this.slamT >= 0.55) {
+        if (level && dist < 1.75) this.onSlam?.(_v2.copy(_v1).normalize());
+        this.jolt(_v2.copy(_v1).normalize(), 3);
+        this.slamCooldown = 2.2;
+        this.state = 'chase';
       }
     } else if (this.state === 'lunge') {
       faceYaw = Math.atan2(_v1.x, _v1.z);
@@ -187,6 +241,17 @@ export class Zombie extends Humanoid {
       this.stagger -= dt;
       _desired.multiplyScalar(0.15);
     }
+    this.slamCooldown = Math.max(this.slamCooldown - dt, 0);
+
+    // A screamer that has seen you stops to shriek, and again every so often.
+    this.screamCooldown = Math.max(this.screamCooldown - dt, 0);
+    this.screaming = Math.max(this.screaming - dt, 0);
+    if (this.type === 'screamer' && this.state === 'chase' && this.screamCooldown <= 0 && player.state !== 'dead') {
+      this.screaming = 1.3;
+      this.screamCooldown = 8;
+      this.onScream?.(this);
+    }
+    if (this.screaming > 0) _desired.set(0, 0, 0);
 
     this.aimYaw = dampAngle(this.aimYaw, faceYaw, p.turnRate, dt);
     this._locomote(dt, _desired);
@@ -200,7 +265,7 @@ export class Zombie extends Humanoid {
     const feeding = crouch < 0 ? 0.5 : 0;
     this.posture.pitch = p.hunch * DEG * q.hunch + feeding + Math.sin(this.time * 1.3 + q.seed) * 0.04;
     this.posture.roll = -q.limpSide * dip * q.limp * p.limp * 0.18;
-    this.posture.headPitch = -this.posture.pitch * 0.7;
+    this.posture.headPitch = -this.posture.pitch * 0.7 - (this.screaming > 0 ? 0.8 : 0); // head thrown back
     this.posture.headRoll = q.headTilt;
 
     this._updateBody(dt);
@@ -214,6 +279,23 @@ export class Zombie extends Humanoid {
     const q = this.quirk;
     const player = this.player;
 
+    if (this.state === 'slam') {
+      // Both fists raised high, then brought down as the blow lands.
+      const k = Math.min(this.slamT / 0.45, 1);
+      for (const [i, hand] of [this.hands.left, this.hands.right].entries()) {
+        const side = i === 0 ? -1 : 1;
+        localPoint(hand.target, this.chestPos, this.chestQuat, side * 0.16, 0.2 + 0.45 * k, 0.15 + 0.1 * (1 - k));
+      }
+      return;
+    }
+    if (this.screaming > 0) {
+      // Arms flung out wide.
+      for (const [i, hand] of [this.hands.left, this.hands.right].entries()) {
+        const side = i === 0 ? -1 : 1;
+        localPoint(hand.target, this.chestPos, this.chestQuat, side * 0.6, 0.05, 0.15);
+      }
+      return;
+    }
     if (this.state === 'grab' && player) {
       // Clamp onto the player's shoulders (crossed: our left takes their right).
       this.hands.left.target.copy(player.arms[1].shoulder);
@@ -260,7 +342,7 @@ export class Zombie extends Humanoid {
     const a = dir.x * dir.x + dir.z * dir.z;
     if (a < 1e-6) return null;
     const b = 2 * (ox * dir.x + oz * dir.z);
-    const c = ox * ox + oz * oz - HIT_RADIUS * HIT_RADIUS;
+    const c = ox * ox + oz * oz - this.hitRadius * this.hitRadius;
     const disc = b * b - 4 * a * c;
     if (disc < 0) return null;
     const t = (-b - Math.sqrt(disc)) / (2 * a);

@@ -41,6 +41,12 @@ export function createPanel(params, zparams, player, { onSkeleton, onSpawn, onFu
   zombies.add(zparams, 'health', 10, 500, 5).name('Health');
   zombies.add(zparams, 'legHealth', 10, 300, 5).name('Leg health (then crawls)');
   zombies.add(zparams, 'crawlSpeed', 0.1, 1.5, 0.05).name('Crawl speed');
+  zombies.add(zparams, 'runnerShare', 0, 1, 0.01).name('Share: runners');
+  zombies.add(zparams, 'bruteShare', 0, 1, 0.01).name('Share: brutes');
+  zombies.add(zparams, 'screamerShare', 0, 1, 0.01).name('Share: screamers');
+  zombies.add(zparams, 'screamRange', 0, 80, 1).name('Scream range');
+  zombies.add(zparams, 'slamDamage', 0, 100, 1).name('Brute blow damage');
+  zombies.add(zparams, 'slamKnock', 0, 12, 0.5).name('Brute blow knock');
   zombies.add(zparams, 'hitShove', 0, 8, 0.1).name('Hit shove');
   zombies.add(zparams, 'limp', 0, 1, 0.05).name('Limp (on spawn)');
   zombies.add(zparams, 'hunch', 0, 45, 1).name('Hunch °');

@@ -101,6 +101,7 @@ export class Player extends Humanoid {
     this.health = params.maxHealth;
     this.state = 'normal'; // 'normal' | 'grabbed' | 'dead'
     this.grabbedBy = null;
+    this.stun = 0; // knocked back and reeling: no control for a moment
     this.deathPos = new THREE.Vector3();
 
     this._buildGun();
@@ -135,6 +136,7 @@ export class Player extends Humanoid {
     this.health = this.params.maxHealth;
     this.state = 'normal';
     this.grabbedBy = null;
+    this.stun = 0;
     this.traversal = null;
     this.ragdoll = null;
     this.traversalPose.pitch = this.traversalPose.roll = 0;
@@ -223,7 +225,7 @@ export class Player extends Humanoid {
     if (_v1.lengthSq() > 1) _v1.normalize();
 
     // Vault/climb toward where you're moving, or where you're facing if still.
-    const canParkour = !grabbed && this.state === 'normal' && !this.reload.active && this.vy === 0;
+    const canParkour = !grabbed && this.state === 'normal' && !this.reload.active && this.vy === 0 && this.stun <= 0;
     if (_v1.lengthSq() > 0.01) _v2.copy(_v1).normalize();
     else _v2.set(Math.sin(this.aimYaw), 0, Math.cos(this.aimYaw));
     const ledge = canParkour ? Humanoid.terrain.findLedge(this.pos, _v2) : null;
@@ -241,11 +243,13 @@ export class Player extends Humanoid {
       this._poseBody(dt);
       return;
     }
-    // Ctrl (walk) wins over Shift (sprint) so a careful player is never surprised.
+    // Walk wins over sprint so a careful player is never surprised.
     this.moveMode = input.walk ? 'walk' : input.sprint ? 'sprint' : 'jog';
     const topSpeed = { walk: p.walkSpeed, jog: p.jogSpeed, sprint: p.runSpeed }[this.moveMode];
-    // Held in place while grabbed.
-    this._locomote(dt, grabbed ? _v1.set(0, 0, 0) : _v1.multiplyScalar(topSpeed));
+    // Held in place while grabbed; knocked back, you slide with the blow.
+    this.stun = Math.max(this.stun - dt, 0);
+    const reeling = this.stun > 0;
+    this._locomote(dt, grabbed || reeling ? _v1.set(0, 0, 0) : _v1.multiplyScalar(topSpeed), reeling ? 0.2 : 1);
 
     let aimTarget = this.aimYaw;
     if (grabbed) {
@@ -270,6 +274,15 @@ export class Player extends Humanoid {
     this._updateReload(dt);
     this._updateDrops(dt);
     this._poseBody(dt);
+  }
+
+  // A heavy blow (a brute's swing): health off, shoved along `dir`, and no
+  // control until you find your feet.
+  knock(dir, speed, damage) {
+    this.health -= damage;
+    this.vel.addScaledVector(dir, speed);
+    this.stun = 0.7;
+    this.jolt(dir, speed * 0.8);
   }
 
   // ---------------------------------------------------------------- death

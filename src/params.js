@@ -121,6 +121,15 @@ export const ZOMBIE_DEFAULTS = {
   health: 100,
   legHealth: 60, // leg damage that takes a zombie off its feet; then it crawls
   crawlSpeed: 0.45,
+  // Of each spawn, the share that are a special kind (the rest are walkers).
+  // On the street they show up further along: screamers from 15 m, runners
+  // from 25 m, brutes from 45 m, reaching these shares 40 m later.
+  runnerShare: 0.15,
+  bruteShare: 0.08,
+  screamerShare: 0.1,
+  screamRange: 30, // how far a screamer's shriek carries
+  slamDamage: 30, // a brute's blow
+  slamKnock: 4.5, // how hard it throws you (m/s)
   hitShove: 2.2,
   corpseTime: 30,
 

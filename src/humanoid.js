@@ -192,17 +192,22 @@ export class Humanoid {
       return mesh;
     };
 
+    // Bulk widens the torso and thickens the limbs (a brute); the skeleton's
+    // lengths stay the same, only the shoulders and hips spread to match.
+    const k = look.bulk ?? 1;
+    this.dims = { shoulderX: DIMS.shoulderX * (1 + (k - 1) * 0.8), hipX: DIMS.hipX * (1 + (k - 1) * 0.6) };
+
     this.pelvis = new THREE.Group();
-    box(this.pelvis, m.pants, 0.3, 0.18, 0.2);
+    box(this.pelvis, m.pants, 0.3 * k, 0.18, 0.2 * k);
     body.add(this.pelvis);
 
     this.chest = new THREE.Group();
-    box(this.chest, m.shirt, 0.38, 0.34, 0.22);
+    box(this.chest, m.shirt, 0.38 * k, 0.34, 0.22 * k);
     body.add(this.chest);
 
     // Unit-height box stretched between pelvis and chest each frame.
-    this.abdomen = box(body, m.shirt, 0.3, 1, 0.19);
-    this.neck = new Segment(body, m.skin, 0.12, 0.045);
+    this.abdomen = box(body, m.shirt, 0.3 * k, 1, 0.19 * k);
+    this.neck = new Segment(body, m.skin, 0.12, 0.045 * k);
 
     this.head = new THREE.Group();
     sphere(this.head, m.skin, 0.11).scale.set(1, 1.1, 1);
@@ -232,9 +237,9 @@ export class Humanoid {
         elbow: new THREE.Vector3(),
         wrist: new THREE.Vector3(),
         // The shoulder ball rides on the clavicle, so it moves with the reach.
-        shoulderMesh: sphere(body, m.shirt, 0.065),
-        upper: new Segment(body, m.shirt, DIMS.upperArm, 0.05),
-        fore: new Segment(body, m.skin, DIMS.forearm, 0.04),
+        shoulderMesh: sphere(body, m.shirt, 0.065 * k),
+        upper: new Segment(body, m.shirt, DIMS.upperArm, 0.05 * k),
+        fore: new Segment(body, m.skin, DIMS.forearm, 0.04 * k),
         hand,
       };
     });
@@ -256,8 +261,8 @@ export class Humanoid {
         knee: new THREE.Vector3(),
         ankle: new THREE.Vector3(),
         ankleTarget: new THREE.Vector3(),
-        thigh: new Segment(body, m.pants, DIMS.thigh, 0.07),
-        shin: new Segment(body, m.pants, DIMS.shin, 0.057),
+        thigh: new Segment(body, m.pants, DIMS.thigh, 0.07 * k),
+        shin: new Segment(body, m.pants, DIMS.shin, 0.057 * k),
         foot,
       };
     });
@@ -311,11 +316,12 @@ export class Humanoid {
     this.leanVel.y += dir.z * amount;
   }
 
-  // Move toward a desired velocity with an acceleration cap.
-  _locomote(dt, desired) {
+  // Move toward a desired velocity with an acceleration cap (scaled down to
+  // let a knock-back carry).
+  _locomote(dt, desired, grip = 1) {
     _v2.subVectors(desired, this.vel);
     _v2.y = 0;
-    const maxDv = this.params.acceleration * dt;
+    const maxDv = this.params.acceleration * grip * dt;
     if (_v2.length() > maxDv) _v2.setLength(maxDv);
     this.vel.add(_v2);
     this.pos.addScaledVector(this.vel, dt);
@@ -975,7 +981,7 @@ export class Humanoid {
     // Arms: two-bone IK from shoulder to the spring-driven hand.
     for (const [i, arm] of this.arms.entries()) {
       const hand = arm.side < 0 ? this.hands.left : this.hands.right;
-      localPoint(arm.shoulderBase, this.chestPos, this.chestQuat, arm.side * DIMS.shoulderX, 0.12, p.roundShoulders);
+      localPoint(arm.shoulderBase, this.chestPos, this.chestQuat, arm.side * this.dims.shoulderX, 0.12, p.roundShoulders);
       // Clavicle: a nearly straight arm drags the shoulder toward the hand,
       // and reaching overhead shrugs it up.
       _v1.subVectors(hand.pos, arm.shoulderBase);
@@ -1011,7 +1017,7 @@ export class Humanoid {
     for (let i = 0; i < 2; i++) {
       const leg = this.legs[i];
       const f = this.feet[i];
-      localPoint(leg.hip, this.pelvisPos, this.pelvisQuat, f.side * DIMS.hipX, -0.06, 0);
+      localPoint(leg.hip, this.pelvisPos, this.pelvisQuat, f.side * this.dims.hipX, -0.06, 0);
       // The foot rocks on whichever end touches the ground: on the heel with
       // the toes up (heel strike), on the toe joint with the heel up (push-off;
       // the toes stay flat). That point stays put and the ankle goes where the

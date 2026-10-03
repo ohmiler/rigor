@@ -159,17 +159,43 @@ const grapple = new Grapple(player, gore, params, {
     sound.breakFree();
     shake = params.cameraShake * 2;
   },
-  onDeath: (mode) => {
-    sound.tear();
-    setTimeout(() => sound.died(), 900);
-    hurtFlash = 1;
-    shake = params.cameraShake * 6;
-    deathSlow = 1.6;
-    document.getElementById('dead-sub').textContent =
-      mode === 'halves' ? 'They pulled you apart.' : 'Torn limb from limb.';
-    setTimeout(() => (document.getElementById('dead').hidden = false), 900);
-  },
+  onDeath: (mode) => onPlayerDeath(mode === 'halves' ? 'They pulled you apart.' : 'Torn limb from limb.'),
 });
+
+function onPlayerDeath(text) {
+  sound.tear();
+  setTimeout(() => sound.died(), 900);
+  hurtFlash = 1;
+  shake = params.cameraShake * 6;
+  deathSlow = 1.6;
+  document.getElementById('dead-sub').textContent = text;
+  setTimeout(() => (document.getElementById('dead').hidden = false), 900);
+}
+
+// A brute's blow: it throws you, and it can finish you.
+function bruteBlow(brute, dir) {
+  if (player.state === 'dead' || escaped) return;
+  sound.slam(brute.pos);
+  player.knock(dir, zparams.slamKnock, zparams.slamDamage);
+  hurtFlash = 1;
+  shake = params.cameraShake * 6;
+  gore.spray(player.chestPos.clone(), dir.clone().setY(0.5), 12, 2.5);
+  if (player.health <= 0) {
+    for (const z of grapple.grabbers) z.state = 'feed';
+    grapple.reset();
+    player.die('arms', [dir.clone().negate()], gore);
+    onPlayerDeath('Beaten to pieces.');
+  }
+}
+
+// A screamer's shriek: every zombie in earshot comes running.
+function screamerShriek(screamer) {
+  sound.scream(screamer.pos, 1.2, true);
+  shake = Math.max(shake, params.cameraShake * 1.5);
+  for (const z of zombies) {
+    if (z !== screamer && z.pos.distanceTo(screamer.pos) < zparams.screamRange) z.alert();
+  }
+}
 
 function restart() {
   gore.clear();
@@ -192,8 +218,24 @@ let kills = 0;
 let runTime = 0;
 let escaped = false;
 
-function addZombie(x, z) {
-  const zombie = new Zombie(scene, zparams, new THREE.Vector3(x, 0, z));
+// Which kind spawns. Specials get likelier further down the street (`along`,
+// metres from the start; a wave around the player uses the full shares).
+function pickType(along = Infinity) {
+  const ramp = (from) => Math.min(Math.max((along - from) / 40, 0), 1);
+  const r = Math.random();
+  const screamer = zparams.screamerShare * ramp(15);
+  const runner = screamer + zparams.runnerShare * ramp(25);
+  const brute = runner + zparams.bruteShare * ramp(45);
+  if (r < screamer) return 'screamer';
+  if (r < runner) return 'runner';
+  if (r < brute) return 'brute';
+  return 'walker';
+}
+
+function addZombie(x, z, type = 'walker') {
+  const zombie = new Zombie(scene, zparams, new THREE.Vector3(x, 0, z), type);
+  zombie.onSlam = (dir) => bruteBlow(zombie, dir);
+  zombie.onScream = screamerShriek;
   zombie.setSkeleton(params.showSkeleton);
   // The limping leg drags along the road rather than stepping.
   zombie.onFootstep = (f) => sound.footstep(f.pos, { zombie: true, drag: f.stepScale < 0.75 });
@@ -213,7 +255,7 @@ function spawnLevelZombies() {
       x = s.x + (Math.random() - 0.5) * 2;
       z = s.z + (Math.random() - 0.5) * 3;
     } while (insideCollider(level, x, z, 0.4) && ++tries < 10);
-    if (tries < 10) addZombie(x, z);
+    if (tries < 10) addZombie(x, z, pickType(z));
   }
 }
 spawnLevelZombies();
@@ -229,7 +271,7 @@ function spawnWave() {
       x = player.pos.x + Math.sin(a) * r;
       z = player.pos.z + Math.cos(a) * r;
     } while (insideCollider(level, x, z, 0.4) && ++tries < 20);
-    if (tries < 20) addZombie(x, z);
+    if (tries < 20) addZombie(x, z, pickType());
   }
 }
 
@@ -595,6 +637,7 @@ function updateUI(real) {
 // than from a single event.
 let screamCooldown = 0;
 let wasDry = false;
+const VOICE_PITCH = { walker: 1, runner: 1.3, brute: 0.55, screamer: 1.45 };
 function updateSounds(dt, real) {
   sound.update(real, player.health / params.maxHealth, player.state !== 'dead');
   if (player.dryFire && !wasDry) sound.dryClick();
@@ -612,20 +655,21 @@ function updateSounds(dt, real) {
     if (z.state !== v.state) {
       // Seeing you: a scream, but a whole street turning at once shouldn't
       // be twenty screams on top of each other.
-      if (v.state === 'wander' && z.state === 'chase') {
+      if (v.state === 'wander' && z.state === 'chase' && z.type !== 'screamer') {
         if (screamCooldown <= 0) {
-          sound.scream(z.pos);
+          sound.scream(z.pos, VOICE_PITCH[z.type]);
           screamCooldown = 0.35;
-        } else sound.groan(z.pos, true);
+        } else sound.groan(z.pos, true, VOICE_PITCH[z.type]);
         v.next = 2 + Math.random() * 2;
       }
       if (z.state === 'lunge') sound.snarl(z.pos);
+      if (z.state === 'slam') sound.groan(z.pos, true, 0.45); // a brute's roar as it winds up
       v.state = z.state;
     }
     v.next -= dt;
     if (v.next <= 0) {
       const angry = z.state === 'chase' || z.state === 'lunge' || z.state === 'grab';
-      sound.groan(z.pos, angry);
+      sound.groan(z.pos, angry, VOICE_PITCH[z.type]);
       v.next = angry ? 1.6 + Math.random() * 2.2 : 4 + Math.random() * 6;
     }
   }
@@ -684,5 +728,5 @@ if (import.meta.env.DEV) {
       kickBodies();
     }
   };
-  window.__rigor = { player, grapple, gore, params, zparams, level, pickups, sound, restart, startGame, advance, get zombies() { return zombies; } };
+  window.__rigor = { player, grapple, gore, params, zparams, level, pickups, sound, restart, startGame, advance, addZombie, get zombies() { return zombies; } };
 }
