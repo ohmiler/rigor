@@ -33,7 +33,8 @@ document.body.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color('#4b566c');
-scene.fog = new THREE.Fog('#4b566c', 25, 60);
+const fog = new THREE.Fog('#4b566c', 25, 60);
+scene.fog = fog;
 
 const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 200);
 
@@ -71,8 +72,9 @@ Humanoid.terrain = {
 // Day is kept around as a debugging view; night is the game.
 function applyEnvironment() {
   const night = params.night;
-  scene.background.set(night ? '#04060a' : '#4b566c');
-  scene.fog.color.copy(scene.background);
+  const background = /** @type {THREE.Color} */ (scene.background);
+  background.set(night ? '#04060a' : '#4b566c');
+  fog.color.copy(background);
   sky.intensity = night ? params.ambientLight : 1.3;
   sky.color.set(night ? '#6d7fa8' : '#c9d6ff');
   sky.groundColor.set(night ? '#0b0d12' : '#3a4150');
@@ -553,14 +555,14 @@ function startGame(fullscreen) {
   started = true;
   startScreen.hidden = true;
   jumpQueued = false;
-  document.activeElement?.blur?.(); // or Space would "click" the hidden button
+  /** @type {HTMLElement} */ (document.activeElement)?.blur?.(); // or Space would "click" the hidden button
   if (fullscreen) enterFullscreen();
 }
 document.getElementById('play-fullscreen').addEventListener('click', () => startGame(true));
 document.getElementById('play-window').addEventListener('click', () => startGame(false));
 // Phones and tablets: say so up front rather than leaving them stuck.
 if (matchMedia('(pointer: coarse)').matches && !matchMedia('(pointer: fine)').matches) {
-  startScreen.querySelector('.touch').hidden = false;
+  /** @type {HTMLElement} */ (startScreen.querySelector('.touch')).hidden = false;
 }
 
 let strugglePresses = 0; // Space presses since last frame
@@ -685,8 +687,8 @@ function updateCamera(dt, snap = false) {
   camPos.set(camTarget.x, camTarget.y + dist * 0.82, camTarget.z - dist * 0.57);
   // Fog is measured from the camera, so it has to start at the player's
   // distance or the player would be fogged too.
-  scene.fog.near = params.night ? dist * 0.92 : dist + 12;
-  scene.fog.far = params.night ? dist + params.fogRange : dist + 50;
+  fog.near = params.night ? dist * 0.92 : dist + 12;
+  fog.far = params.night ? dist + params.fogRange : dist + 50;
   nearGlow.position.set(camTarget.x, 1.8, camTarget.z);
   camera.position.lerp(camPos, k);
   camera.lookAt(camTarget);
@@ -733,7 +735,7 @@ function updateUI(real) {
   ui.health.style.width = `${Math.max(player.health / params.maxHealth, 0) * 100}%`;
   hurtFlash = Math.max(hurtFlash - real * 1.5, 0);
   const lowHealth = player.state !== 'dead' && player.health < params.maxHealth * 0.35 ? 0.35 : 0;
-  ui.hurt.style.opacity = Math.max(hurtFlash, lowHealth);
+  ui.hurt.style.opacity = String(Math.max(hurtFlash, lowHealth));
   ui.struggle.hidden = !grapple.active;
   if (grapple.active) {
     ui.struggleFill.style.width = `${grapple.struggle * 100}%`;
@@ -846,7 +848,8 @@ function frame(timestamp) {
   const dt = params.paused || !started ? 0 : real * params.timeScale * slow;
 
   // Dev test scripts can set window.__rigorInput to drive the game alone.
-  const input = (import.meta.env.DEV && window.__rigorInput) ? { ...window.__rigorInput } : readInput();
+  const override = import.meta.env.DEV && /** @type {any} */ (window).__rigorInput;
+  const input = override ? { ...override } : readInput();
   // A tap is consumed by the first simulation step only.
   input.jump = jumpQueued && dt > 0;
   if (dt > 0) jumpQueued = false;
@@ -892,5 +895,5 @@ if (import.meta.env.DEV) {
       kickBodies();
     }
   };
-  window.__rigor = { player, grapple, gore, params, zparams, level, pickups, sound, restart, startGame, advance, addZombie, get zombies() { return zombies; } };
+  /** @type {any} */ (window).__rigor = { player, grapple, gore, params, zparams, level, pickups, sound, restart, startGame, advance, addZombie, get zombies() { return zombies; } };
 }

@@ -41,7 +41,7 @@ export class Effects {
       );
       mesh.visible = false;
       scene.add(mesh);
-      return { mesh, life: 0 };
+      return { mesh, life: 0, maxLife: 1 };
     });
 
     const sparkGeo = new THREE.SphereGeometry(0.05, 8, 6);
@@ -57,7 +57,7 @@ export class Effects {
       );
       mesh.visible = false;
       scene.add(mesh);
-      return { mesh, life: 0 };
+      return { mesh, life: 0, maxLife: 1 };
     });
     this.nextTracer = 0;
     this.nextSpark = 0;

@@ -83,6 +83,8 @@ export class Ragdoll {
       legs: LEG.map((l) => ({ hip: l.hip, knee: l.knee, shin: l.knee, ank: l.ank, toe: l.toe })),
     };
     this.crawlState = null;
+    this.crawlDir = null; // the way a crawler faces, turning gradually
+    this.poseIn = 0;
     this.drive = null; // { mode: 'crawl' | 'grab' | 'idle', target, reach: [Vector3, Vector3] }
 
     const P = (pos, r, mass, friction = 6) => {
@@ -133,7 +135,7 @@ export class Ragdoll {
       });
     }
 
-    const link = (a, b, { min = false, stiff = 1, rest } = {}) =>
+    const link = (a, b, { min = false, stiff = 1, rest = undefined } = {}) =>
       this.constraints.push({ a, b, rest: rest ?? this.particles[a].pos.distanceTo(this.particles[b].pos), min, stiff });
     // The torso is one rigid block: every pair of its six points is held.
     const torso = [...TOP, ...BOTTOM];

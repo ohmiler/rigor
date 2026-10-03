@@ -23,7 +23,7 @@ export class Sound {
   // so this runs from the start screen.
   start() {
     if (this.ctx) return;
-    const AC = window.AudioContext || window.webkitAudioContext;
+    const AC = window.AudioContext || /** @type {any} */ (window).webkitAudioContext;
     if (!AC) return;
     const ctx = (this.ctx = new AC());
     this.master = ctx.createGain();
@@ -83,7 +83,7 @@ export class Sound {
   }
 
   // A burst of filtered noise.
-  _noise(dest, { at = 0, dur = 0.1, type = 'lowpass', freq = 1000, freqEnd, q = 1, gain = 1, attack = 0.002 }) {
+  _noise(dest, { at = 0, dur = 0.1, type = 'lowpass', freq = 1000, freqEnd = 0, q = 1, gain = 1, attack = 0.002 }) {
     const ctx = this.ctx;
     const t = ctx.currentTime + at;
     const src = ctx.createBufferSource();
@@ -105,7 +105,7 @@ export class Sound {
   }
 
   // A pitched blip that can glide.
-  _tone(dest, { at = 0, dur = 0.1, type = 'sine', freq = 440, freqEnd, gain = 1, attack = 0.002 }) {
+  _tone(dest, { at = 0, dur = 0.1, type = 'sine', freq = 440, freqEnd = 0, gain = 1, attack = 0.002 }) {
     const ctx = this.ctx;
     const t = ctx.currentTime + at;
     const osc = ctx.createOscillator();

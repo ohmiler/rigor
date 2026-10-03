@@ -84,6 +84,7 @@ export class Gore {
       landed: false,
       size: 1,
       stretch: 1,
+      yaw: 0,
     }));
     this.nextDrop = 0;
     for (let i = 0; i < MAX_DROPS; i++) this.drops.setMatrixAt(i, _m.makeScale(0, 0, 0));

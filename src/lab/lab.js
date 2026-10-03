@@ -81,11 +81,13 @@ function addCar(x, z) {
   g.rotation.y = yaw;
   const paint = mat('#c9c6bd', 0.55);
   const glass = mat('#1c2530', 0.25);
-  for (const [w, h, d, y, oz, m] of [
+  /** @type {Array<[number, number, number, number, number, THREE.Material]>} */
+  const parts = [
     [1.8, 0.7, 4.3, 0.6, 0, paint],
     [1.62, 0.55, 2.2, 1.22, -0.2, paint],
     [1.64, 0.4, 2.0, 1.24, -0.2, glass],
-  ]) {
+  ];
+  for (const [w, h, d, y, oz, m] of parts) {
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m);
     mesh.position.set(0, y, oz);
     mesh.castShadow = mesh.receiveShadow = true;
@@ -123,6 +125,7 @@ for (const c of lab.colliders) if (c.climb === undefined) c.climb = true;
 
 // Translucent stand-in used for onion skins, the A/B baseline, and sampling trails.
 class Ghost extends Humanoid {
+  /** @param {Record<string, any>} [p] the levers of whoever it ghosts */
   constructor(color, opacity, p = params) {
     super(scene, p, { skin: color, shirt: color, pants: color, shoes: color });
     for (const m of Object.values(this.materials)) {
@@ -237,13 +240,15 @@ function rebuildGhosts() {
 }
 
 const TRAIL_SAMPLES = 90;
-const trails = [
+/** @type {Array<[string, string, (b: any) => THREE.Vector3]>} */
+const trailDefs = [
   ['hips', '#ffd23f', (b) => b.pelvisPos],
   ['left hand', '#3fe07a', (b) => b.arms[0].wrist],
   ['right hand', '#3fd2e0', (b) => b.arms[1].wrist],
   ['left foot', '#ff5d73', (b) => b.legs[0].ankle],
   ['right foot', '#ff5dd8', (b) => b.legs[1].ankle],
-].map(([name, color, get]) => {
+];
+const trails = trailDefs.map(([name, color, get]) => {
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(TRAIL_SAMPLES * 3), 3));
   const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color, depthTest: false, transparent: true }));
@@ -287,17 +292,18 @@ function setView(view) {
   camera.position.set(f.x + x, f.y + y, f.z + z);
   controls.update();
 }
-for (const b of document.querySelectorAll('#views button')) b.addEventListener('click', () => setView(b.dataset.view));
+for (const b of /** @type {NodeListOf<HTMLElement>} */ (document.querySelectorAll('#views button'))) b.addEventListener('click', () => setView(b.dataset.view));
 
 // ---------------------------------------------------------------- timeline
 
+const input = (id) => /** @type {HTMLInputElement} */ (document.getElementById(id));
 const ui = {
   play: document.getElementById('play'),
-  scrub: document.getElementById('scrub'),
+  scrub: input('scrub'),
   ticks: document.getElementById('ticks'),
   readout: document.getElementById('readout'),
-  speed: document.getElementById('speed'),
-  loop: document.getElementById('loop'),
+  speed: input('speed'),
+  loop: input('loop'),
   info: document.getElementById('info'),
   check: document.getElementById('check'),
 };
@@ -320,7 +326,7 @@ function seek(k) {
 ui.play.addEventListener('click', () => setPlaying(!state.playing));
 ui.scrub.addEventListener('input', () => {
   scrubbing = true;
-  seek(ui.scrub.value / 1000);
+  seek(Number(ui.scrub.value) / 1000);
 });
 ui.scrub.addEventListener('change', () => (scrubbing = false));
 const frameStep = () => 1 / 60 / Math.max(state.duration, 0.1);
@@ -353,7 +359,7 @@ setup.add(state, 'test', testNames).name('Obstacle').onChange(() => {
   refreshHelpers();
 });
 setup.add(state, 'subject', ['player', 'zombie']).name('Who').onChange(selectSubject);
-setup.add({ run: () => setPlaying(true) || restartRun() }, 'run').name('Run again');
+setup.add({ run: () => (setPlaying(true), restartRun()) }, 'run').name('Run again');
 const checkResult = { text: '' };
 setup
   .add(
@@ -633,6 +639,7 @@ function checkMove(testIndex, steps = 50) {
     }
   }
   state.test = saved;
+  /** @param {number[]} v distance and where in the move */
   const cm = ([d, k]) => `${Math.round(d * 100)} cm @ ${Math.round(k * 100)}%`;
   if (!ok) return `${TESTS[testIndex].name}: no ledge found`;
   const issues = [];
@@ -837,5 +844,5 @@ setPlaying(true);
 requestAnimationFrame(frame);
 
 if (import.meta.env.DEV) {
-  window.__lab = { state, player, seek, poseAt, beginMove, TESTS, setView, refreshHelpers, lab, controls, camera, keys: TRAVERSAL_KEYS, checkMove, checkAll };
+  /** @type {any} */ (window).__lab = { state, player, seek, poseAt, beginMove, TESTS, setView, refreshHelpers, lab, controls, camera, keys: TRAVERSAL_KEYS, checkMove, checkAll };
 }

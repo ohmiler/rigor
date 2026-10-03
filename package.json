@@ -6,13 +6,22 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "typecheck": "tsc --noEmit -p jsconfig.json",
+    "check": "npm run typecheck && npm test && npm run build && npm run test:e2e"
   },
   "dependencies": {
     "lil-gui": "^0.21.0",
     "three": "^0.186.1"
   },
   "devDependencies": {
-    "vite": "^8.3.2"
+    "@playwright/test": "^1.63.0",
+    "@types/three": "^0.186.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.2",
+    "vitest": "^5.0.3"
   }
 }

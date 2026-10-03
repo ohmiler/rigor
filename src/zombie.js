@@ -143,6 +143,12 @@ export class Zombie extends Humanoid {
     this.screamCooldown = 0;
     this.screaming = 0; // seconds left of a shriek (head back, arms out)
     this.ragdoll = null; // dead, or crawling on its arms with its legs shot out
+    // Hooks main.js sets: a brute's blow, a screamer's shriek, an arm shot off.
+    this.onSlam = null;
+    this.onScream = null;
+    this.onSever = null;
+    this.voice = null; // main.js keeps its sound state here
+    this._soaked = null; // blood-soaked copies of its materials
     this.crawlDelay = 0;
 
     this._applyLimp();

@@ -94,6 +94,7 @@ export class Player extends Humanoid {
     this.onMeleeFrame = null; // (tip, kind, alreadyHit: Set, dir) => void, each frame the blade can connect
     this.onGrabStab = null; // (zombie) => void, the knife going into whatever holds you
     this.onThrow = null; // (from: Vector3, to: Vector3) => void, a bottle leaving the hand
+    this.onReloadEvent = null; // (step) => void, for sounds
     this.moveMode = 'jog';
     this.aimPitch = 0;
     this.parkourHint = null; // 'vault' | 'climb' | null

@@ -58,6 +58,14 @@ export const DIMS = {
  */
 export class Humanoid {
   // The ground everyone walks on. main.js points this at the level.
+  /**
+   * @type {{
+   *   heightAt: (x: number, z: number, maxY?: number) => number,
+   *   findLedge: (pos: THREE.Vector3, dir: THREE.Vector3) => any,
+   *   solidAt?: (p: THREE.Vector3) => boolean,
+   *   collide?: (pos: THREE.Vector3, radius: number, bottom: number, stepUp?: number) => void,
+   * }}
+   */
   static terrain = {
     heightAt: () => 0,
     findLedge: () => null,
@@ -89,6 +97,9 @@ export class Humanoid {
     this.vy = 0; // vertical speed while falling
     this.traversal = null; // active vault or climb
     this.pivoting = false; // legs turning on the spot to catch up with the aim
+    // Hooks for sound: a foot planting, landing from a drop.
+    this.onFootstep = null;
+    this.onLand = null;
     this.backpedal = false; // moving away from where you're aiming, legs facing the aim
     this.traversalPose = { pitch: 0, roll: 0 };
     this.gunStow = 0; // 0 = aiming, 1 = gun swung down out of the way
@@ -242,6 +253,8 @@ export class Humanoid {
         upper: new Segment(body, m.shirt, DIMS.upperArm, 0.05 * k),
         fore: new Segment(body, m.skin, DIMS.forearm, 0.04 * k),
         hand,
+        lostFore: false, // shot off (zombies)
+        lostUpper: false,
       };
     });
 
@@ -264,6 +277,7 @@ export class Humanoid {
         ankleTarget: new THREE.Vector3(),
         thigh: new Segment(body, m.pants, DIMS.thigh, 0.07 * k),
         shin: new Segment(body, m.pants, DIMS.shin, 0.057 * k),
+        kneeTurn: 0, // how far the knee is swung round to clear an obstacle
         foot,
       };
     });
@@ -361,7 +375,7 @@ export class Humanoid {
    * traversal.js) place the hips, hands and feet relative to the real edge;
    * IK and the springs do the rest.
    */
-  startTraversal(ledge, { duration, bothHands = false, keys }) {
+  startTraversal(ledge, { duration, bothHands = false, keys = undefined }) {
     this.traversal = new Traversal(ledge, this, { duration, bothHands, keys });
     this.vy = 0;
     this.reach = 0;
@@ -867,7 +881,7 @@ export class Humanoid {
 
   // Subclass hooks.
   _afterFrames() {}
-  _setHandTargets() {}
+  _setHandTargets(dt) {}
   _afterPose() {}
 
   _poseBody(dt, snap = false) {

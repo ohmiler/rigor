@@ -1,0 +1,66 @@
+import { test, expect } from '@playwright/test';
+
+// Collect anything that goes wrong on the page.
+function watchErrors(page) {
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
+  page.on('console', (m) => m.type() === 'error' && errors.push(`console: ${m.text()}`));
+  page.on('requestfailed', (r) => errors.push(`request failed: ${r.url()}`));
+  page.on('response', (r) => r.status() >= 400 && errors.push(`${r.status()}: ${r.url()}`));
+  return errors;
+}
+
+const metresToGo = async (page) => Number((await page.locator('#objective').textContent()).match(/(\d+) m/)?.[1]);
+
+test('the game loads, starts from the start screen, and the player can walk', async ({ page }, info) => {
+  const errors = watchErrors(page);
+  await page.goto('/');
+  await expect(page.locator('#start')).toBeVisible();
+  // Dev tools stay hidden on the published build.
+  await expect(page.locator('.lil-gui')).toHaveCount(0);
+  await expect(page.locator('#lab-link')).toBeHidden();
+
+  await page.getByRole('button', { name: 'Play in a window' }).click();
+  await expect(page.locator('#start')).toBeHidden();
+  await page.waitForTimeout(500);
+  const before = await metresToGo(page);
+  await page.keyboard.down('w');
+  await page.waitForTimeout(2000);
+  await page.keyboard.up('w');
+  const after = await metresToGo(page);
+  expect(after).toBeLessThan(before);
+
+  // Fire, reload and swap guns: nothing should throw.
+  await page.mouse.move(640, 250);
+  await page.mouse.down();
+  await page.waitForTimeout(600);
+  await page.mouse.up();
+  await page.keyboard.press('r');
+  // No swapping mid-reload (by design): see it start, then wait for it to finish.
+  await expect(page.locator('#ammo .state')).toContainText('RELOADING', { timeout: 5000 });
+  await expect(page.locator('#ammo .state')).not.toContainText('RELOADING', { timeout: 15000 });
+  await page.keyboard.press('2');
+  await expect(page.locator('#ammo .weapon')).toContainText('PISTOL', { timeout: 10000 });
+  await page.keyboard.press('3');
+  await expect(page.locator('#ammo .weapon')).toContainText('KNIFE', { timeout: 10000 });
+
+  await info.attach('game', { body: await page.screenshot(), contentType: 'image/png' });
+  expect(errors).toEqual([]);
+});
+
+test('?dev shows the tuning tools', async ({ page }) => {
+  const errors = watchErrors(page);
+  await page.goto('/?dev');
+  await expect(page.locator('.lil-gui').first()).toBeVisible();
+  await expect(page.locator('#stats')).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
+test('the lab loads and its move checks run', async ({ page }) => {
+  const errors = watchErrors(page);
+  await page.goto('/lab.html');
+  await expect(page.locator('canvas')).toBeVisible();
+  await page.locator('.lil-controller', { hasText: 'Check all moves' }).locator('button').click();
+  await expect(page.locator('#check')).toBeVisible();
+  expect(errors).toEqual([]);
+});

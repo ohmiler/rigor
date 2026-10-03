@@ -198,6 +198,10 @@ export const VISIBILITY = {
 
 const TRANSIENT = ['paused', 'slowMo'];
 
+/**
+ * @param {Record<string, any>} source
+ * @param {Record<string, any>} [defaults]
+ */
 export function pickKnown(source, defaults = DEFAULTS) {
   const out = {};
   for (const key of Object.keys(defaults)) {
@@ -206,6 +210,11 @@ export function pickKnown(source, defaults = DEFAULTS) {
   return out;
 }
 
+/**
+ * Levers: the defaults, with anything saved from the panel on top.
+ * @param {Record<string, any>} [defaults]
+ * @returns {Record<string, any>}
+ */
 export function loadParams(defaults = DEFAULTS, key = 'procedural-shooter.params.v1') {
   const params = { ...defaults };
   try {
@@ -229,6 +238,10 @@ export function saveParams(params, key = 'procedural-shooter.params.v1') {
   }
 }
 
+/**
+ * @param {Record<string, any>} params
+ * @param {Record<string, any>} [defaults]
+ */
 export function resetParams(params, defaults = DEFAULTS) {
   Object.assign(params, defaults);
 }
