@@ -232,6 +232,12 @@ export function buildStreet(scene) {
   supply('ammo', 5.2, 91);
   supply('medkit', 5.2, 99); // dumpster lid
   supply('ammo', 0.5, 105.2); // between the last barriers
+  // Empty bottles to throw.
+  supply('bottle', 5.6, 18);
+  supply('bottle', -5.6, 40);
+  supply('bottle', 2.9, 52); // in the road by the car
+  supply('bottle', 5.5, 72);
+  supply('bottle', -5.5, 86);
 
   // ------------------------------------------------------------ zombies
   // Scattered down the street, thicker toward the end.

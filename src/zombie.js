@@ -144,7 +144,7 @@ export class Zombie extends Humanoid {
     _v1.subVectors(player.state === 'dead' ? player.deathPos : player.pos, this.pos);
     _v1.y = 0;
     const dist = _v1.length();
-    if (this.state === 'wander' && dist < p.detectRange) this.state = 'chase';
+    if ((this.state === 'wander' || this.state === 'investigate') && dist < p.detectRange) this.state = 'chase';
     if (player.state === 'dead' && (this.state === 'chase' || this.state === 'lunge' || this.state === 'grab')) {
       this.state = 'feed';
     }
@@ -215,6 +215,22 @@ export class Zombie extends Humanoid {
       faceYaw = Math.atan2(_v1.x, _v1.z);
       if (dist > 0.75) _desired.copy(_v1).setLength(p.chaseSpeed * this.quirk.speed);
       else crouch = -0.33; // kneel over the body
+    } else if (this.state === 'investigate') {
+      // Off to see what made that noise, a bit quicker than a wander; once
+      // there it looks about for a while, then goes back to wandering.
+      _v2.subVectors(this.noiseAt, this.pos);
+      _v2.y = 0;
+      if (_v2.length() > 0.8) {
+        _desired.copy(_v2).setLength(p.wanderSpeed * 2 * this.quirk.speed);
+        faceYaw = Math.atan2(_v2.x, _v2.z);
+      } else {
+        this.investigateT += dt;
+        faceYaw = this.aimYaw + Math.sin(this.investigateT * 1.3 + this.quirk.seed) * 0.8 * dt;
+        if (this.investigateT > 4) {
+          this.state = 'wander';
+          this.wanderTimer = 0;
+        }
+      }
     } else {
       this.wanderTimer -= dt;
       _v2.subVectors(this.wanderTarget, this.pos);
@@ -391,7 +407,15 @@ export class Zombie extends Humanoid {
   }
 
   alert() {
-    if (!this.dead && this.state === 'wander') this.state = 'chase';
+    if (!this.dead && (this.state === 'wander' || this.state === 'investigate')) this.state = 'chase';
+  }
+
+  // A noise somewhere (a bottle smashing): if it hasn't seen you, it goes to look.
+  investigate(point) {
+    if (this.dead || this.ragdoll || (this.state !== 'wander' && this.state !== 'investigate')) return;
+    this.state = 'investigate';
+    this.noiseAt = point.clone();
+    this.investigateT = 0;
   }
 
   // Thrown off when the player breaks free.

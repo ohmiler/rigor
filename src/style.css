@@ -556,3 +556,13 @@ body:not(.dev) .dev-only {
   border-color: rgba(240, 244, 250, 0.3);
   border-style: dashed;
 }
+
+#ammo .bottles {
+  margin-top: 2px;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  color: #9ee0a0;
+}
+#ammo.melee .reserve::before {
+  content: '';
+}

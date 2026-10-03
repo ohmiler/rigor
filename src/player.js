@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { Humanoid } from './humanoid.js';
 import { traversalTiming } from './traversal.js';
 import { Ragdoll } from './ragdoll.js';
-import { WEAPONS, HOLSTERS, buildWeaponMeshes } from './weapons.js';
+import { WEAPONS, HOLSTERS, MELEE, buildWeaponMeshes } from './weapons.js';
 import { DEG, wrapAngle, dampAngle, damp, localPoint, localDir, quatFrom } from './rig-utils.js';
 
 const _v1 = new THREE.Vector3();
@@ -13,6 +13,11 @@ const HOLSTER_TIME = 0.2; // seconds to put a gun away
 const DRAW_TIME = 0.25; // and to bring the next one up
 const SHOVE_TIME = 0.38;
 const SHOVE_HIT = 0.1; // when in the thrust it connects
+const THROW_TIME = 0.45;
+const THROW_RELEASE = 0.24; // when the bottle leaves the hand
+const GRAB_STAB_TIME = 0.75; // slow enough that two holding on is still a race against the bite
+const GRAB_STAB_HIT = 0.5;
+const smooth = (k) => k * k * (3 - 2 * k);
 
 // Unit cone, apex at the origin, opening along +Z to radius 1 at z = 1.
 const BEAM_GEOMETRY = new THREE.ConeGeometry(1, 1, 40, 1, true)
@@ -85,7 +90,10 @@ export class Player extends Humanoid {
     this.spreadNow = params.spread; // the cone a shot can go in right now (degrees)
     this.onShot = null; // (muzzle: Vector3, dir: Vector3, damage: number) => void
     this.onShove = null; // (dir: Vector3) => void, at the moment a shove connects
-    this.onWeaponEvent = null; // ('holster' | 'draw' | 'shove') => void, for sounds
+    this.onWeaponEvent = null; // ('holster' | 'draw' | 'shove' | 'slash' | 'stab' | 'throw') => void, for sounds
+    this.onMeleeFrame = null; // (tip, kind, alreadyHit: Set, dir) => void, each frame the blade can connect
+    this.onGrabStab = null; // (zombie) => void, the knife going into whatever holds you
+    this.onThrow = null; // (from: Vector3, to: Vector3) => void, a bottle leaving the hand
     this.moveMode = 'jog';
     this.aimPitch = 0;
     this.parkourHint = null; // 'vault' | 'climb' | null
@@ -154,6 +162,16 @@ export class Player extends Humanoid {
     this.flashlight.shadow.normalBias = 0.02;
     this.beam = new THREE.Mesh(BEAM_GEOMETRY, BEAM_MATERIAL);
 
+    // A bottle in the free hand while winding up a throw.
+    const glass = new THREE.MeshStandardMaterial({ color: '#3f6b3a', roughness: 0.2, transparent: true, opacity: 0.85 });
+    this.bottleMesh = new THREE.Group();
+    const b1 = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.16, 10), glass);
+    const b2 = new THREE.Mesh(new THREE.CylinderGeometry(0.013, 0.02, 0.08, 8), glass);
+    b2.position.y = 0.12;
+    this.bottleMesh.add(b1, b2);
+    this.bottleMesh.visible = false;
+    this.body.add(this.bottleMesh);
+
     this.casingGeo = new THREE.CylinderGeometry(0.006, 0.006, 0.03, 6).rotateX(Math.PI / 2);
     this.casingMat = new THREE.MeshStandardMaterial({ color: '#d9b45a', metalness: 0.8, roughness: 0.35 });
   }
@@ -162,7 +180,7 @@ export class Player extends Humanoid {
   _resetWeapons() {
     const p = this.params;
     for (const w of Object.values(this.weapons)) {
-      w.ammo = w.def.stat.magSize ?? p.magSize;
+      w.ammo = w.def.melee ? 0 : (w.def.stat.magSize ?? p.magSize);
       w.chambered = w.def.chamber;
       w.slideLocked = false;
       w.slideBack = 0;
@@ -177,12 +195,29 @@ export class Player extends Humanoid {
     this.drawBlend = 1; // 1 = gun up and ready, 0 = put away
     this.shoveT = -1;
     this.shoveCooldown = 0;
+    this.meleeT = -1;
+    this.meleeNext = 'slash';
+    this.grabStabT = -1;
+    this.throwT = -1;
+    this.bottles = p.startBottles ?? 1;
+    this.fireWas = false;
+    this.lastWeapon = null;
+    this.weapon = null;
     this._equip('rifle');
   }
 
   _equip(name) {
+    if (this.weapon && this.weapon.name !== name) this.lastWeapon = this.weapon.name;
     this.weapon = this.weapons[name];
     const def = this.weapon.def;
+    if (def.melee) {
+      // No light on a knife: the free hand holds the torch out in front.
+      this.flashlight.position.set(0, 0.01, 0.07);
+      this.flashlight.target.position.set(0, 0.01, 6);
+      this.beam.position.copy(this.flashlight.position);
+      this.arms[0].hand.add(this.flashlight, this.flashlight.target, this.beam);
+      return;
+    }
     this.flashlight.position.set(0, name === 'rifle' ? -0.045 : -0.033, def.torch);
     this.flashlight.target.position.set(0, this.flashlight.position.y, def.torch + 6);
     this.beam.position.copy(this.flashlight.position);
@@ -214,26 +249,52 @@ export class Player extends Humanoid {
     return this.weapon.ammo + (this.weapon.def.chamber && this.weapon.chambered ? 1 : 0);
   }
   get reserve() {
-    return this.reserves[this.weapon.def.ammo];
+    return this.weapon.def.ammo ? this.reserves[this.weapon.def.ammo] : 0;
   }
   set reserve(v) {
-    this.reserves[this.weapon.def.ammo] = v;
+    if (this.weapon.def.ammo) this.reserves[this.weapon.def.ammo] = v;
   }
   get weaponReady() {
-    return !this.switchTo && this.drawBlend >= 0.999 && this.shoveT < 0;
+    return !this.switchTo && this.drawBlend >= 0.999 && this.shoveT < 0 && this.meleeT < 0 && this.throwT < 0;
   }
 
   // Put the gun in hand away and draw another (1/2 or Q). Not mid-reload,
   // mid-climb or while something has hold of you.
   switchWeapon(name) {
     if (!this.weapons[name] || this.state !== 'normal' || this.traversal || this.reload.active) return;
+    if (this.meleeT >= 0 || this.throwT >= 0) return;
     if (name === this.weapon.name && !this.switchTo) return;
     if (this.switchTo !== name) this.onWeaponEvent?.('holster');
     this.switchTo = name === this.weapon.name ? null : name;
   }
 
+  // Q goes back to the last weapon used (or the next one along).
   otherWeapon() {
+    if (this.lastWeapon && this.lastWeapon !== this.weapon.name) return this.lastWeapon;
     return Object.keys(this.weapons).find((n) => n !== this.weapon.name);
+  }
+
+  // Knife: alternate a slash and a stab on each click.
+  startMelee() {
+    if (!this.weapon.def.melee || !this.weaponReady || this.state !== 'normal') return;
+    this.meleeKind = this.meleeNext;
+    this.meleeNext = this.meleeKind === 'slash' ? 'stab' : 'slash';
+    this.meleeT = 0;
+    this.meleeHits = new Set();
+    this.onWeaponEvent?.(this.meleeKind);
+  }
+
+  // Throw a bottle at `target` (G). Lands where it's aimed (up to 13 m) and
+  // breaks loudly: anything that hasn't seen you goes to look.
+  startThrow(target) {
+    if (!target || this.bottles <= 0 || this.state !== 'normal' || this.traversal) return;
+    if (this.reload.active || this.switchTo || this.throwT >= 0 || this.meleeT >= 0 || this.shoveT >= 0) return;
+    this.throwTarget = target.clone();
+    _v1.subVectors(this.throwTarget, this.pos).setY(0);
+    if (_v1.length() > 13) this.throwTarget.copy(this.pos).addScaledVector(_v1.setLength(13), 1);
+    this.throwT = 0;
+    this.thrown = false;
+    this.onWeaponEvent?.('throw');
   }
 
   // Shove whatever is in front with the gun (right click): a short thrust
@@ -259,6 +320,23 @@ export class Player extends Humanoid {
       }
     } else {
       this.drawBlend = Math.min(this.drawBlend + dt / DRAW_TIME, 1);
+    }
+    if (this.meleeT >= 0) {
+      const m = MELEE[this.meleeKind];
+      this.meleeT += dt;
+      if (this.meleeT >= m.from && this.meleeT <= m.to + dt) {
+        this.onMeleeFrame?.(localPoint(_v2, this.gunPos, this.gunQuat, ...this.weapon.def.muzzle), this.meleeKind, this.meleeHits, _v1.set(Math.sin(this.aimYaw), 0, Math.cos(this.aimYaw)));
+      }
+      if (this.meleeT >= m.time || this.state !== 'normal') this.meleeT = -1;
+    }
+    if (this.throwT >= 0) {
+      this.throwT += dt;
+      if (!this.thrown && this.throwT >= THROW_RELEASE) {
+        this.thrown = true;
+        this.bottles--;
+        this.onThrow?.(this.arms[0].wrist.clone(), this.throwTarget);
+      }
+      if (this.throwT >= THROW_TIME || this.state !== 'normal') this.throwT = -1;
     }
     this.shoveCooldown = Math.max(this.shoveCooldown - dt, 0);
     if (this.shoveT >= 0) {
@@ -343,6 +421,25 @@ export class Player extends Humanoid {
     }
     this.aimYaw = dampAngle(this.aimYaw, aimTarget, p.aimTurnRate, dt);
     this.chestYawOffset = p.gunLead * DEG;
+
+    // Grabbed with a knife in hand: a click drives it into the head of
+    // whatever has hold of you, instead of only struggling.
+    const firePressed = input.fire && !this.fireWas;
+    this.fireWas = input.fire;
+    if (grabbed && this.weapon.def.melee && firePressed && this.grabStabT < 0) {
+      this.grabStabT = 0;
+      this.grabStabTarget = this.grabbedBy;
+      this.grabStabDone = false;
+      this.onWeaponEvent?.('stab');
+    }
+    if (this.grabStabT >= 0) {
+      this.grabStabT += dt;
+      if (!this.grabStabDone && this.grabStabT >= GRAB_STAB_HIT) {
+        this.grabStabDone = true;
+        this.onGrabStab?.(this.grabStabTarget);
+      }
+      if (this.grabStabT >= GRAB_STAB_TIME) this.grabStabT = -1;
+    }
 
     this._updateHands(dt);
     this._updateFiring(dt, input.fire && !grabbed);
@@ -442,6 +539,10 @@ export class Player extends Humanoid {
     this.spreadNow = (this.stat('spread') + this.stat('spreadMove') * moving + this.bloom) * (this.moveMode === 'walk' ? 0.75 : 1);
 
     if (!triggerHeld) this.dryFire = false;
+    if (w.def.melee) {
+      if (pressed) this.startMelee();
+      return;
+    }
     if (!triggerHeld || this.reload.active || !this.weaponReady) return;
     if (!w.def.auto && !pressed) return; // one shot per pull
     this.dryFire = false;
@@ -532,7 +633,7 @@ export class Player extends Humanoid {
   // reloaded from empty adds racking the slide to chamber a round.
   startReload() {
     const w = this.weapon;
-    if (this.reload.active || !this.weaponReady || this.reserve <= 0) return;
+    if (w.def.melee || this.reload.active || !this.weaponReady || this.reserve <= 0) return;
     if (w.ammo >= this.magSize && (!w.def.chamber || w.chambered)) return;
     this.reload.steps = w.def.reload(w.def.chamber && !w.chambered);
     this.reload.active = true;
@@ -643,7 +744,39 @@ export class Player extends Humanoid {
       fwd += 0.2 * s;
       up += 0.06 * s;
     }
-    localPoint(this.gunPos, this.chestPos, this.chestQuat, this.stat('gunRight'), up, fwd);
+    let right = this.stat('gunRight');
+    if (this.meleeT >= 0) {
+      // The knife's path: wind up, cut through, recover.
+      const m = MELEE[this.meleeKind];
+      const t = this.meleeT;
+      const wind = smooth(Math.min(t / m.from, 1));
+      const cut = smooth(Math.min(Math.max((t - m.from) / (m.to - m.from), 0), 1));
+      const back = smooth(Math.min(Math.max((t - m.to) / (m.time - m.to), 0), 1));
+      let yaw = 0;
+      if (this.meleeKind === 'slash') {
+        // Right to left across the front, blade flat.
+        right += (0.22 * wind - 0.6 * cut) * (1 - back) + 0.0 * back;
+        up += (0.12 * wind) * (1 - back) + 0.08 * cut * (1 - back);
+        fwd += Math.sin(Math.PI * cut) * 0.22;
+        yaw = (-0.9 * wind + 1.9 * cut) * (1 - back);
+        quatFrom(this.gunQuat, this.aimPitch, this.aimYaw + yaw, -1.3 * (1 - back));
+      } else {
+        // Drawn back, then driven straight in at chest height.
+        fwd += (-0.12 * wind + 0.46 * cut) * (1 - back);
+        up += (0.14 * wind + 0.06 * cut) * (1 - back);
+        right -= 0.12 * cut * (1 - back);
+        quatFrom(this.gunQuat, this.aimPitch - 0.1 * (1 - back), this.aimYaw - 0.15 * cut * (1 - back), 0);
+      }
+    }
+    localPoint(this.gunPos, this.chestPos, this.chestQuat, right, up, fwd);
+    if (this.grabStabT >= 0 && this.grabStabTarget) {
+      // Into the head of whatever has hold of you.
+      const t = this.grabStabT;
+      const reach = smooth(Math.min(t / GRAB_STAB_HIT, 1)) * (1 - smooth(Math.max((t - GRAB_STAB_HIT) / (GRAB_STAB_TIME - GRAB_STAB_HIT), 0)));
+      this.gunPos.lerp(this.grabStabTarget.headPos, reach * 0.85);
+      _v1.subVectors(this.grabStabTarget.headPos, this.gunPos);
+      if (_v1.lengthSq() > 1e-4) this.gunQuat.slerp(_q1.setFromUnitVectors(_v2.set(0, 0, 1), _v1.normalize()), reach);
+    }
     // Put away: mid-swap, or slung while climbing.
     const stow = Math.max(this.gunStow, 1 - this.drawBlend);
     if (stow > 0) {
@@ -663,11 +796,12 @@ export class Player extends Humanoid {
 
   _updateFlashlight() {
     const p = this.params;
-    // Off while the gun is put away (it points at the ground).
-    const on = p.flashlightOn && this.drawBlend > 0.5 && this.gunStow < 0.5;
+    // Off while the gun is put away (it points at the ground); a torch in the
+    // hand (with the knife) stays on.
+    const on = p.flashlightOn && (this.weapon.def.melee || (this.drawBlend > 0.5 && this.gunStow < 0.5));
     const angle = p.flashAngle * DEG;
     // Intensity 0 rather than visible = false: toggling lights recompiles shaders.
-    this.flashlight.intensity = on ? p.flashIntensity * (this.weapon.name === 'pistol' ? 0.8 : 1) : 0;
+    this.flashlight.intensity = on ? p.flashIntensity * (this.weapon.name === 'rifle' ? 1 : 0.8) : 0;
     this.flashlight.angle = angle;
     this.flashlight.distance = p.flashRange;
     this.flashlight.shadow.camera.far = p.flashRange;
@@ -687,6 +821,19 @@ export class Player extends Humanoid {
     const { left, right } = this.hands;
     const def = this.weapon.def;
     localPoint(right.target, this.gunPos, this.gunQuat, ...def.grip);
+    if (this.throwT >= 0) {
+      // Bottle back over the left shoulder, then flung forward.
+      const t = this.throwT;
+      const wind = smooth(Math.min(t / THROW_RELEASE, 1));
+      const fling = smooth(Math.min(Math.max((t - THROW_RELEASE * 0.7) / 0.12, 0), 1));
+      const settle = smooth(Math.min(Math.max((t - THROW_RELEASE - 0.08) / (THROW_TIME - THROW_RELEASE - 0.08), 0), 1));
+      localPoint(_v1, this.chestPos, this.chestQuat, -0.2, 0.28, -0.18);
+      localPoint(_v2, this.chestPos, this.chestQuat, -0.12, 0.22, 0.52);
+      left.target.lerpVectors(_v1, _v2, fling);
+      if (t < THROW_RELEASE * 0.7) left.target.lerp(localPoint(_v2, this.chestPos, this.chestQuat, -0.24, -0.3, 0.1), 1 - wind);
+      if (settle > 0) left.target.lerp(localPoint(_v2, this.chestPos, this.chestQuat, -0.16, 0.02, 0.36), settle);
+      return;
+    }
     if (this.state === 'grabbed' && this.grabbedBy) {
       // Free hand shoves against the zombie's chest.
       left.target.lerpVectors(this.chestPos, this.grabbedBy.chestPos, 0.75);
@@ -697,12 +844,21 @@ export class Player extends Humanoid {
     } else if (this.drawBlend < 0.6) {
       // Mid-swap the free hand drops to the side.
       localPoint(left.target, this.chestPos, this.chestQuat, -0.24, -0.42, 0.08);
+    } else if (!def.support) {
+      // With the knife, the torch held out in front at shoulder height.
+      localPoint(left.target, this.chestPos, this.chestQuat, -0.16, 0.02, 0.36);
     } else {
       localPoint(left.target, this.gunPos, this.gunQuat, ...def.support);
     }
   }
 
   _afterPose() {
+    // The bottle rides in the left hand until it's thrown.
+    this.bottleMesh.visible = this.throwT >= 0 && !this.thrown;
+    if (this.bottleMesh.visible) {
+      this.bottleMesh.position.copy(this.arms[0].wrist);
+      this.bottleMesh.quaternion.copy(this.arms[0].hand.quaternion);
+    }
     for (const w of Object.values(this.weapons)) {
       const def = w.def;
       const inHand = w === this.weapon;

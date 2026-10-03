@@ -214,10 +214,35 @@ export class Sound {
     } else if (event === 'draw') {
       this._noise(o, { dur: 0.12, type: 'bandpass', freq: 1200, q: 0.8, gain: 0.45, attack: 0.02 });
       this._noise(o, { at: 0.1, dur: 0.04, type: 'bandpass', freq: 2600, q: 5, gain: 0.6 });
+    } else if (event === 'slash' || event === 'stab') {
+      // A blade cutting the air.
+      const f = event === 'slash' ? [900, 2600] : [1400, 3000];
+      this._noise(o, { dur: 0.14, type: 'bandpass', freq: f[0], freqEnd: f[1], q: 2, gain: 0.55, attack: 0.02 });
+    } else if (event === 'throw') {
+      this._noise(o, { at: 0.2, dur: 0.16, type: 'bandpass', freq: 500, freqEnd: 1000, q: 0.8, gain: 0.4, attack: 0.03 });
     } else if (event === 'shove') {
       this._noise(o, { dur: 0.18, type: 'bandpass', freq: 500, freqEnd: 1100, q: 0.8, gain: 0.6, attack: 0.03 }); // whoosh
       this._voice(o, { dur: 0.2, f0: 130, f0End: 115, formants: [[550, 4, 1], [950, 5, 0.5]], gain: 0.35, rasp: 0.4, attack: 0.01 }); // effort
     }
+  }
+
+  // A bottle smashing: a sharp crack and a spray of tinkling glass. Loud.
+  glass(pos) {
+    const o = this._out(pos, 40, 0.8);
+    if (!o) return;
+    this._noise(o, { dur: 0.05, type: 'highpass', freq: 2500, gain: 1 });
+    this._noise(o, { dur: 0.25, type: 'bandpass', freq: 4200, q: 1.5, gain: 0.6 });
+    for (let i = 0; i < 7; i++) {
+      this._tone(o, { at: 0.03 + Math.random() * 0.35, dur: 0.07, type: 'sine', freq: rand(3000, 6500), gain: 0.18 });
+    }
+  }
+
+  // The knife going in.
+  stab(pos) {
+    const o = this._out(pos, 16, 0.6);
+    if (!o) return;
+    this._noise(o, { dur: 0.06, type: 'lowpass', freq: 700, gain: 0.9 });
+    this._noise(o, { at: 0.02, dur: 0.18, type: 'bandpass', freq: 1100, freqEnd: 350, q: 3, gain: 0.7 });
   }
 
   // The shove landing on a body.
@@ -388,7 +413,10 @@ export class Sound {
   pickup(type) {
     const o = this._out(null, 0, 0.45);
     if (!o) return;
-    if (type === 'ammo' || type === 'pistolAmmo') {
+    if (type === 'bottle') {
+      this._tone(o, { dur: 0.08, type: 'sine', freq: 2400, gain: 0.25 });
+      this._tone(o, { at: 0.06, dur: 0.1, type: 'sine', freq: 3100, gain: 0.2 });
+    } else if (type === 'ammo' || type === 'pistolAmmo') {
       this._noise(o, { dur: 0.04, type: 'bandpass', freq: 2400, q: 5, gain: 0.8 });
       this._noise(o, { at: 0.08, dur: 0.04, type: 'bandpass', freq: 3000, q: 5, gain: 0.7 });
     } else {

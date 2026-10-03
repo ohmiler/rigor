@@ -9,6 +9,7 @@ const LOOKS = {
   ammo: { body: '#4f5a32', trim: '#d8b23a', halo: '#ffc85a', chance: 0.75 },
   medkit: { body: '#e9e6df', trim: '#c8302f', halo: '#ff6b6b', chance: 0.8 },
   pistolAmmo: { body: '#8a6a44', trim: '#e3dccb', halo: '#ffc85a', chance: 0.75 },
+  bottle: { body: '#3f6b3a', trim: '#2c4a28', halo: '#9ee0a0', chance: 0.7 },
 };
 // An ammo spot holds rifle or pistol rounds, rolled each run.
 const PISTOL_SHARE = 0.45;
@@ -32,6 +33,12 @@ function buildMesh(type) {
     box(mat(look.body, 0.2), 0.32, 0.18, 0.16, 0, 0.09, 0);
     box(mat(look.trim, 0.5), 0.325, 0.03, 0.165, 0, 0.12, 0);
     box(mat('#2a2f1c', 0.1), 0.14, 0.02, 0.03, 0, 0.19, 0);
+  } else if (type === 'bottle') {
+    // An empty bottle, lying on its side.
+    const glass = new THREE.MeshStandardMaterial({ color: look.body, roughness: 0.2, transparent: true, opacity: 0.85 });
+    const body = box(glass, 0.07, 0.07, 0.16, 0, 0.035, 0);
+    const neck = box(glass, 0.03, 0.03, 0.08, 0, 0.035, 0.12);
+    body.material = neck.material = glass;
   } else if (type === 'pistolAmmo') {
     // A small cardboard box of pistol rounds.
     box(mat(look.body, 0.15), 0.2, 0.08, 0.13, 0, 0.04, 0);

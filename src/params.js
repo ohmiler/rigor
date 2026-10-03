@@ -76,6 +76,9 @@ export const DEFAULTS = {
   startPistolReserve: 15, // spare pistol rounds at the start of a run
   pistolAmmoPickup: 12, // rounds in a box of pistol ammo
   shoveCooldown: 0.8,
+  startBottles: 1, // bottles to throw at the start of a run (G)
+  maxBottles: 3,
+  noiseRange: 14, // how far a smashed bottle draws zombies that haven't seen you
   shoveRange: 1.3, // how far the shove reaches (metres)
   shoveForce: 3, // how hard it knocks zombies back
   recoilKick: 1.4, // backward velocity impulse per shot (m/s)

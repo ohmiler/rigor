@@ -7,6 +7,8 @@ import { Gore } from './gore.js';
 import { Grapple } from './grapple.js';
 import { Pickups } from './pickups.js';
 import { Sound } from './audio.js';
+import { Throwables } from './throwables.js';
+import { MELEE } from './weapons.js';
 import { buildStreet, collideCircle, insideCollider, heightAt, findLedge, solidAt, STREET_LENGTH } from './level.js';
 import { Humanoid } from './humanoid.js';
 import { loadParams, ZOMBIE_DEFAULTS, ZOMBIE_KEY, VISIBILITY } from './params.js';
@@ -119,6 +121,56 @@ player.onLand = (impact) => sound.land(player.pos, impact);
 player.onReloadEvent = (step) => sound.reload(step === 'rack' ? 'seat' : step);
 player.onWeaponEvent = (event) => sound.weapon(event);
 // The shove lands on whatever is in a cone in front, within reach.
+// A bottle smashing: it draws anything nearby that hasn't seen you.
+const throwables = new Throwables(scene, (pos) => {
+  sound.glass(pos);
+  for (const z of zombies) if (z.pos.distanceTo(pos) < params.noiseRange) z.investigate(pos);
+});
+player.onThrow = (from, to) => throwables.lob(from, to);
+
+// The knife, each frame its blade can connect: anything the tip is inside
+// takes the cut (once per swing). A stab or cut to the head hits far harder;
+// on a crawler's head it's the end. Taken from behind by one that hasn't
+// seen you, it dies without a sound, and nothing else hears.
+player.onMeleeFrame = (tip, kind, hits, dir) => {
+  for (const z of zombies) {
+    if (z.dead || hits.has(z)) continue;
+    let head = false;
+    if (z.ragdoll) {
+      if (tip.distanceTo(z.ragdoll.head) < 0.24) head = true;
+      else if (!z.ragdoll.particles.some((p) => p.pos.distanceTo(tip) < 0.2)) continue;
+    } else {
+      if (Math.hypot(tip.x - z.pos.x, tip.z - z.pos.z) > z.hitRadius + 0.1) continue;
+      const h = tip.y - z.pos.y;
+      if (h < 0.15 || h > 1.9) continue;
+      head = tip.distanceTo(z.headPos) < 0.17; // where its head actually is (hunched ones carry it low)
+    }
+    hits.add(z);
+    const toPlayer = player.pos.clone().sub(z.pos).setY(0).normalize();
+    const facing = new THREE.Vector3(Math.sin(z.aimYaw), 0, Math.cos(z.aimYaw));
+    const unaware = !z.ragdoll && (z.state === 'wander' || z.state === 'investigate') && facing.dot(toPlayer) < -0.2;
+    let damage = MELEE[kind].damage * (head ? 2.5 : 1);
+    if (unaware || (z.ragdoll && head)) damage = 9999;
+    const wasDead = z.dead;
+    z.takeHit(dir, damage, { headshot: head, height: tip.y });
+    if (!wasDead && z.dead) kills++;
+    gore.spray(tip.clone(), dir.clone().setY(0.3), head ? 16 : 9, 2.2);
+    sound.stab(tip);
+    if (unaware) notePickup('SILENT KILL', 'medkit');
+  }
+};
+
+// Grabbed with the knife out: it goes into the head of whatever has hold.
+player.onGrabStab = (z) => {
+  if (!z || z.dead) return;
+  const dir = z.pos.clone().sub(player.pos).setY(0).normalize();
+  z.takeHit(dir, 9999, { headshot: true, height: z.headPos.y });
+  kills++;
+  gore.spray(z.headPos.clone(), dir.clone().setY(0.5), 22, 2.6);
+  sound.stab(z.headPos);
+  shake = Math.max(shake, params.cameraShake * 2);
+};
+
 player.onShove = (dir) => {
   let hit = false;
   for (const z of zombies) {
@@ -152,6 +204,13 @@ function notePickup(text, kind) {
   pickupNoteTimer = setTimeout(() => (pickupNote.hidden = true), 1600);
 }
 function takePickup(type) {
+  if (type === 'bottle') {
+    if (player.bottles >= params.maxBottles) return false; // hands full: leave it
+    player.bottles++;
+    sound.pickup('bottle');
+    notePickup('+1 BOTTLE', 'ammo');
+    return true;
+  }
   if (type === 'ammo' || type === 'pistolAmmo') {
     const kind = type === 'ammo' ? 'rifle' : 'pistol';
     const n = kind === 'rifle' ? params.ammoPickup : params.pistolAmmoPickup;
@@ -223,6 +282,7 @@ function screamerShriek(screamer) {
 
 function restart() {
   gore.clear();
+  throwables.clear();
   grapple.reset();
   player.reset(level.start);
   setSkeleton(params.showSkeleton);
@@ -495,7 +555,9 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'KeyR') player.startReload();
   if (e.code === 'Digit1') player.switchWeapon('rifle');
   if (e.code === 'Digit2') player.switchWeapon('pistol');
+  if (e.code === 'Digit3') player.switchWeapon('knife');
   if (e.code === 'KeyQ') player.switchWeapon(player.switchTo ? player.weapon.name : player.otherWeapon());
+  if (e.code === 'KeyG') player.startThrow(lastAim);
   if (e.code === 'KeyP') params.paused = !params.paused;
   if (e.code === 'KeyF') player.toggleFlashlight();
   if (e.code === 'KeyV') cycleVisibility();
@@ -614,6 +676,7 @@ const ui = {
   ammo: document.getElementById('ammo'),
   ammoWeapon: document.querySelector('#ammo .weapon'),
   reticle: document.getElementById('reticle'),
+  bottles: document.querySelector('#ammo .bottles'),
   ammoMag: document.querySelector('#ammo .mag'),
   ammoReserve: document.querySelector('#ammo .reserve'),
   ammoState: document.querySelector('#ammo .state'),
@@ -641,24 +704,28 @@ function updateUI(real) {
   // Ammo: what's in the gun, what's left to reload, and what to do about it.
   const other = player.weapons[player.otherWeapon()];
   ui.ammoWeapon.innerHTML = `${(player.switchTo ? player.weapons[player.switchTo] : player.weapon).def.label} <span>· ${other.def.slot} ${other.def.label.toLowerCase()}</span>`;
-  ui.ammoMag.textContent = player.magState === 'gun' ? player.rounds : '–';
-  ui.ammoReserve.textContent = player.reserve;
+  const melee = player.weapon.def.melee;
+  ui.ammoMag.textContent = melee ? '' : player.magState === 'gun' ? player.rounds : '–';
+  ui.ammoReserve.textContent = melee ? '' : player.reserve;
+  ui.ammo.classList.toggle('melee', melee);
+  ui.bottles.textContent = player.bottles > 0 ? `${'▮'.repeat(player.bottles)} BOTTLE${player.bottles > 1 ? 'S' : ''} · G` : '';
   let ammoState = '';
   let ammoClass = '';
   if (player.reload.active) ammoState = 'RELOADING';
   else if (player.switchTo) ammoState = 'SWITCHING';
+  else if (melee) ammoState = player.state === 'grabbed' ? 'CLICK · STAB IT' : '';
   else if (player.rounds === 0 && player.reserve > 0) {
     ammoState = 'RELOAD · R';
     ammoClass = 'low';
   } else if (player.rounds === 0) {
     // Nothing left for this gun: say so, and whether the other one has any.
-    const otherLeft = other.ammo + (other.chambered ? 1 : 0) + player.reserves[other.def.ammo];
+    const otherLeft = other.def.melee ? 1 : other.ammo + (other.chambered ? 1 : 0) + player.reserves[other.def.ammo];
     ammoState = otherLeft > 0 ? 'OUT OF AMMO · Q' : 'OUT OF AMMO';
     ammoClass = 'empty';
   } else if (player.rounds <= player.magSize * 0.25) ammoClass = 'low';
   if (player.dryFire) ammoClass = 'empty';
   ui.ammoState.textContent = ammoState;
-  ui.ammo.className = ammoClass;
+  ui.ammo.className = ammoClass + (melee ? ' melee' : '');
   ui.ammo.hidden = player.state === 'dead';
 
   // The reticle: a ring at the cursor as wide as the cone a shot can go in.
@@ -750,6 +817,7 @@ function frame(timestamp) {
   effects.update(dt);
   gore.update(dt);
   pickups.update(dt, player, takePickup);
+  throwables.update(dt);
 
   updateCamera(real);
   updateUI(real);
@@ -777,6 +845,7 @@ if (import.meta.env.DEV) {
       updateWorld(STEP, { ...input });
       grapple.update(STEP, 0);
       gore.update(STEP);
+      throwables.update(STEP);
       kickBodies();
     }
   };
