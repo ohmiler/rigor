@@ -400,7 +400,11 @@ export class Player extends Humanoid {
     }
     // Walk wins over sprint so a careful player is never surprised.
     this.moveMode = input.walk ? 'walk' : input.sprint ? 'sprint' : 'jog';
-    const topSpeed = { walk: p.walkSpeed, jog: p.jogSpeed, sprint: p.runSpeed }[this.moveMode] * this.weapon.def.moveSpeed;
+    // Badly hurt you favour one leg: it lifts less and takes weight briefly, and you're slower.
+    const hurt = this.health < p.maxHealth * 0.35;
+    this.feet[1].stepScale = hurt ? 0.55 : 1;
+    this.feet[1].dutyScale = hurt ? 0.8 : 1;
+    const topSpeed = { walk: p.walkSpeed, jog: p.jogSpeed, sprint: p.runSpeed }[this.moveMode] * this.weapon.def.moveSpeed * (hurt ? 0.85 : 1);
     // Held in place while grabbed; knocked back, you slide with the blow.
     this.stun = Math.max(this.stun - dt, 0);
     const reeling = this.stun > 0;

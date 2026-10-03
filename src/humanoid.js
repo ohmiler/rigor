@@ -121,6 +121,7 @@ export class Humanoid {
       side,
       offset: side < 0 ? 0 : 0.5,
       stepScale: 1,
+      dutyScale: 1, // < 1: a hurt leg that won't bear weight long (a hobbling step)
       planted: true,
       progress: 0,
       pos: new THREE.Vector3(),
@@ -650,7 +651,9 @@ export class Humanoid {
         f.target.y = Humanoid.terrain.heightAt(f.target.x, f.target.z, this.pos.y + STEP_UP);
       }
       const local = (this.phase + f.offset) % 1;
-      if (local < this.duty) {
+      // A hurt leg spends less of the stride on the ground: a hobble.
+      const duty = this.duty * f.dutyScale;
+      if (local < duty) {
         if (!f.planted) {
           f.planted = true;
           f.pos.y = Humanoid.terrain.heightAt(f.pos.x, f.pos.z, Math.max(f.pos.y, f.target.y) + 0.05);
@@ -665,7 +668,7 @@ export class Humanoid {
         } else if (Math.abs(twistErr) > 0.5 && rateSpeed > 0) {
           this._turnOnBall(f, wrapAngle(f.yaw - Math.sign(twistErr) * Math.min(Math.abs(twistErr) - 0.5, (p.footPivotRate ?? 4) * dt)));
         }
-        f.progress = local / this.duty;
+        f.progress = local / duty;
         // The landing angle rolls onto a flat foot early in the stance...
         f.pitch = f.landPitch * (1 - smoothstep(clamp(f.progress / 0.18, 0, 1)));
         // ...and late in the stance the heel peels up before the foot leaves the
@@ -681,7 +684,7 @@ export class Humanoid {
           f.liftYaw = f.yaw;
           f.liftPitch = Math.min(f.pitch, 0);
         }
-        const t = (local - this.duty) / (1 - this.duty);
+        const t = (local - duty) / (1 - duty);
         f.progress = t;
         // Stepping up, the foot rises to the new height first and only then
         // reaches forward onto it; stepping down, it reaches out over the edge
@@ -997,7 +1000,9 @@ export class Humanoid {
       const plant = this.handPlant[i];
       localDir(_v3, this.chestQuat, arm.side * (0.6 + 0.5 * plant), -1 + 0.6 * plant, -0.35 - 0.3 * plant);
       solveTwoBone(arm.shoulder, hand.pos, DIMS.upperArm, DIMS.forearm, _v3, arm.elbow, arm.wrist);
-      arm.upper.place(arm.shoulder, arm.elbow);
+      // A part shot off has gone with the gore; nothing to lay out.
+      if (!arm.lostUpper) arm.upper.place(arm.shoulder, arm.elbow);
+      if (arm.lostFore) continue;
       arm.fore.place(arm.elbow, arm.wrist);
 
       // Hand follows the forearm, or lies flat (palm down) when planted on a ledge.

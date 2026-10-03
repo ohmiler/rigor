@@ -131,7 +131,8 @@ export const ZOMBIE_DEFAULTS = {
   climbDelay: 4, // seconds a zombie paws at a car before clambering up after you
   climbSlowness: 2.2, // how many times slower than the player they climb
   health: 100,
-  legHealth: 60, // leg damage that takes a zombie off its feet; then it crawls
+  legHealth: 60, // leg damage that takes a zombie off its feet; then it crawls (half of it on one leg cripples that leg)
+  armHealth: 30, // damage that shoots off a forearm (hit the stump again for the rest)
   crawlSpeed: 0.45,
   // Of each spawn, the share that are a special kind (the rest are walkers).
   // On the street they show up further along: screamers from 15 m, runners

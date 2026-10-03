@@ -574,7 +574,8 @@ export class Ragdoll {
       arm.elbow.copy(P(m.el));
       arm.wrist.copy(P(m.wr));
       arm.shoulderMesh.position.copy(arm.shoulder);
-      arm.upper.place(P(m.sh), P(m.el));
+      if (!arm.lostUpper) arm.upper.place(P(m.sh), P(m.el));
+      if (arm.lostFore) return; // shot off earlier
       arm.fore.place(P(m.fore), P(m.wr));
       _c.subVectors(P(m.wr), P(m.fore)).normalize();
       arm.hand.quaternion.setFromUnitVectors(Z_AXIS, _c);

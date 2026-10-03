@@ -271,6 +271,30 @@ function bruteBlow(brute, dir) {
   }
 }
 
+// An arm shot off: the forearm (or what's left of the arm) flies off the way
+// the bullet went, and the stump spurts for a while.
+function severArm(z, i, part, dir) {
+  const arm = z.arms[i];
+  const parts = part === 'fore' ? [arm.fore.mesh, arm.hand] : [arm.upper.mesh];
+  const joint = (part === 'fore' ? arm.elbow : arm.shoulder).clone();
+  gore.tear(parts, joint, {
+    vel: dir.clone().multiplyScalar(3).add(new THREE.Vector3(0, 1.8, 0)),
+    angVel: new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(20),
+    rest: 0.05,
+  });
+  gore.spray(joint, dir.clone().setY(0.4), 20, 2.8);
+  gore.wound(joint, dir, {
+    rate: 45,
+    duration: 4,
+    speed: 1.4,
+    follow: (outPoint, outDir) => {
+      outPoint.copy(part === 'fore' ? arm.elbow : arm.shoulder);
+      outDir.subVectors(outPoint, part === 'fore' ? arm.shoulder : z.chestPos).normalize();
+    },
+  });
+  sound.sever(joint);
+}
+
 // A screamer's shriek: every zombie in earshot comes running.
 function screamerShriek(screamer) {
   sound.scream(screamer.pos, 1.2, true);
@@ -320,6 +344,7 @@ function addZombie(x, z, type = 'walker') {
   const zombie = new Zombie(scene, zparams, new THREE.Vector3(x, 0, z), type);
   zombie.onSlam = (dir) => bruteBlow(zombie, dir);
   zombie.onScream = screamerShriek;
+  zombie.onSever = severArm;
   zombie.setSkeleton(params.showSkeleton);
   // The limping leg drags along the road rather than stepping.
   zombie.onFootstep = (f) => sound.footstep(f.pos, { zombie: true, drag: f.stepScale < 0.75 });

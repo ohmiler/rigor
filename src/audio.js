@@ -237,6 +237,14 @@ export class Sound {
     }
   }
 
+  // A limb shot off: a crack of bone and a wet tear.
+  sever(pos) {
+    const o = this._out(pos, 26, 0.7);
+    if (!o) return;
+    this._noise(o, { dur: 0.04, type: 'bandpass', freq: 2400, q: 3, gain: 0.9 });
+    this._noise(o, { at: 0.02, dur: 0.3, type: 'bandpass', freq: 1200, freqEnd: 300, q: 2, gain: 0.7 });
+  }
+
   // The knife going in.
   stab(pos) {
     const o = this._out(pos, 16, 0.6);

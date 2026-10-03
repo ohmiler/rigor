@@ -132,6 +132,13 @@ export class Zombie extends Humanoid {
     this.deathT = 0;
     this.removed = false;
     this.legHealth = (params.legHealth ?? 60) * kind.legHealth;
+    this.legHealth0 = this.legHealth;
+    // Each limb takes its own damage. A leg past half the leg health is
+    // crippled (it hobbles on it); an arm past its health is shot off.
+    this.legDamage = [0, 0];
+    this.armHealth = [1, 1].map(() => (params.armHealth ?? 30) * kind.legHealth);
+    this.injurySpeed = 1; // slowed by a crippled leg
+    this.armLean = 0; // constant sideways lean from a missing arm
     this.slamCooldown = 0;
     this.screamCooldown = 0;
     this.screaming = 0; // seconds left of a shriek (head back, arms out)
@@ -148,6 +155,48 @@ export class Zombie extends Humanoid {
     const bad = this.feet[q.limpSide < 0 ? 0 : 1];
     bad.stepScale = 1 - limp * 0.7; // the bad leg barely lifts: it drags
     this.feet[1].offset = 0.5 + limp * 0.12 * q.limpSide; // uneven rhythm
+  }
+
+  // Wounds change how it moves. A crippled leg becomes the bad leg: it barely
+  // lifts, takes weight only briefly (a hobble), the body drops onto it
+  // every step, and it slows to about half. A missing arm tips the body
+  // toward the side that still has its weight.
+  _updateInjuries() {
+    const q = this.quirk;
+    const crippleAt = this.legHealth0 * 0.5;
+    let worst = -1;
+    this.legDamage.forEach((d, i) => {
+      if (d >= crippleAt && (worst < 0 || d > this.legDamage[worst])) worst = i;
+    });
+    if (worst >= 0) {
+      q.limpSide = worst === 0 ? -1 : 1;
+      q.limp = 1;
+      this.limpBoost = 2.6;
+      this.feet.forEach((f, i) => {
+        f.stepScale = i === worst ? 0.22 : 1;
+        f.dutyScale = i === worst ? 0.62 : 1;
+      });
+      this.feet[1].offset = 0.5 + 0.12 * q.limpSide;
+      this.injurySpeed = 0.55;
+    }
+    const lost = this.arms.map((a) => (a.lostUpper ? 1 : a.lostFore ? 0.5 : 0));
+    this.armLean = (lost[1] - lost[0]) * 0.12; // + rolls toward the left (three.js +X)
+  }
+
+  // A dark, blood-soaked copy of one of its materials (once per kind).
+  _bloodied(kind) {
+    this._soaked ??= {};
+    if (!this._soaked[kind]) {
+      const m = this.materials[kind].clone();
+      m.color.lerp(new THREE.Color('#3d0808'), 0.45);
+      this._soaked[kind] = m;
+    }
+    return this._soaked[kind];
+  }
+
+  // Both forearms gone: nothing to grab with.
+  get canGrab() {
+    return !(this.arms[0].lostFore && this.arms[1].lostFore);
   }
 
   // ---------------------------------------------------------------- update
@@ -187,7 +236,7 @@ export class Zombie extends Humanoid {
     const level = Math.abs(player.pos.y - this.pos.y) < 0.4; // same height as the player
     if (this.state === 'chase') {
       faceYaw = Math.atan2(_v1.x, _v1.z);
-      if (dist > p.attackRange) _desired.copy(_v1).setLength(p.chaseSpeed * this.quirk.speed);
+      if (dist > p.attackRange) _desired.copy(_v1).setLength(p.chaseSpeed * this.quirk.speed * this.injurySpeed);
 
       // Player is up on something: crowd below, and eventually clamber up after them.
       this.climbTimer = this.climbTimer ?? 0;
@@ -211,7 +260,7 @@ export class Zombie extends Humanoid {
           this.state = 'slam';
           this.slamT = 0;
         }
-      } else if (level && dist < p.attackRange + 0.2 && this.stagger <= 0 && this.grabCooldown <= 0 && grapple.canGrab()) {
+      } else if (level && dist < p.attackRange + 0.2 && this.stagger <= 0 && this.grabCooldown <= 0 && this.canGrab && grapple.canGrab()) {
         this.state = 'lunge';
         this.lungeT = 0;
         this.jolt(_v2.copy(_v1).normalize(), 2.5);
@@ -245,7 +294,7 @@ export class Zombie extends Humanoid {
       if (Math.random() < dt * 1.5) this.jolt(_v2.copy(_v1).normalize(), 1.6); // gnashing lunges
     } else if (this.state === 'feed') {
       faceYaw = Math.atan2(_v1.x, _v1.z);
-      if (dist > 0.75) _desired.copy(_v1).setLength(p.chaseSpeed * this.quirk.speed);
+      if (dist > 0.75) _desired.copy(_v1).setLength(p.chaseSpeed * this.quirk.speed * this.injurySpeed);
       else crouch = -0.33; // kneel over the body
     } else if (this.state === 'investigate') {
       // Off to see what made that noise, a bit quicker than a wander; once
@@ -253,7 +302,7 @@ export class Zombie extends Humanoid {
       _v2.subVectors(this.noiseAt, this.pos);
       _v2.y = 0;
       if (_v2.length() > 0.8) {
-        _desired.copy(_v2).setLength(p.wanderSpeed * 2 * this.quirk.speed);
+        _desired.copy(_v2).setLength(p.wanderSpeed * 2 * this.quirk.speed * this.injurySpeed);
         faceYaw = Math.atan2(_v2.x, _v2.z);
       } else {
         this.investigateT += dt;
@@ -271,7 +320,7 @@ export class Zombie extends Humanoid {
         this.wanderTimer = rand(4, 9);
         this.wanderTarget.set(this.pos.x + rand(-5, 5), 0, this.pos.z + rand(-5, 5));
       } else if (_v2.length() > 0.4) {
-        _desired.copy(_v2).setLength(p.wanderSpeed * this.quirk.speed);
+        _desired.copy(_v2).setLength(p.wanderSpeed * this.quirk.speed * this.injurySpeed);
         faceYaw = Math.atan2(_v2.x, _v2.z);
       }
     }
@@ -313,7 +362,8 @@ export class Zombie extends Humanoid {
     this.heightOffset = damp(this.heightOffset, crouch, 4, dt);
     const feeding = crouch < 0 ? 0.5 : 0;
     this.posture.pitch = p.hunch * DEG * q.hunch + feeding + Math.sin(this.time * 1.3 + q.seed) * 0.04;
-    this.posture.roll = -q.limpSide * dip * q.limp * p.limp * 0.18;
+    // A crippled leg drops the body hard onto it each step (limpBoost).
+    this.posture.roll = -q.limpSide * dip * q.limp * Math.max(p.limp, this.limpBoost ? 1 : 0) * 0.18 * (this.limpBoost ?? 1) + this.armLean;
     this.posture.headPitch = -this.posture.pitch * 0.7 - (this.screaming > 0 ? 0.8 : 0); // head thrown back
     this.posture.headRoll = q.headTilt;
 
@@ -347,6 +397,7 @@ export class Zombie extends Humanoid {
     }
     if (this.state === 'grab' && player) {
       // Clamp onto the player's shoulders (crossed: our left takes their right).
+      // (A stump just swings.)
       this.hands.left.target.copy(player.arms[1].shoulder);
       this.hands.right.target.copy(player.arms[0].shoulder);
       return;
@@ -393,23 +444,31 @@ export class Zombie extends Humanoid {
     if (this.ragdoll) return this.ragdoll.raycast(origin, dir);
     const k = this.hitRadius / HIT_RADIUS; // bulk
     let best = null;
-    const test = (t, zone) => {
-      if (t !== null && (!best || t < best.distance)) best = { distance: t, zone };
+    const test = (t, zone, limb = null, part = null) => {
+      if (t !== null && (!best || t < best.distance)) best = { distance: t, zone, limb, part };
     };
     test(raySphere(origin, dir, this.headPos, 0.13), 'head');
     _v1.copy(this.chestPos).add(_v2.set(0, 0.14, 0));
     test(rayCapsule(origin, dir, this.pelvisPos, _v1, 0.19 * k), 'body');
-    for (const arm of this.arms) {
-      test(rayCapsule(origin, dir, arm.shoulder, arm.elbow, 0.06 * k), 'body');
-      test(rayCapsule(origin, dir, arm.elbow, arm.wrist, 0.05 * k), 'body');
-    }
-    for (const leg of this.legs) {
-      test(rayCapsule(origin, dir, leg.hip, leg.knee, 0.085 * k), 'legs');
-      test(rayCapsule(origin, dir, leg.knee, leg.ankle, 0.07 * k), 'legs');
-    }
+    this.arms.forEach((arm, i) => {
+      if (!arm.lostUpper) test(rayCapsule(origin, dir, arm.shoulder, arm.elbow, 0.06 * k), 'arm', i, 'upper');
+      if (!arm.lostFore) test(rayCapsule(origin, dir, arm.elbow, arm.wrist, 0.05 * k), 'arm', i, 'fore');
+    });
+    this.legs.forEach((leg, i) => {
+      test(rayCapsule(origin, dir, leg.hip, leg.knee, 0.085 * k), 'legs', i);
+      test(rayCapsule(origin, dir, leg.knee, leg.ankle, 0.07 * k), 'legs', i);
+    });
     if (!best) return null;
     const y = origin.y + dir.y * best.distance;
-    return { distance: best.distance, headshot: best.zone === 'head', leg: best.zone === 'legs', height: y };
+    return {
+      distance: best.distance,
+      headshot: best.zone === 'head',
+      leg: best.zone === 'legs',
+      arm: best.zone === 'arm',
+      limb: best.limb, // which arm or leg (0 left, 1 right)
+      part: best.part, // 'upper' | 'fore' for an arm
+      height: y,
+    };
   }
 
   takeHit(dir, damage, hit = {}) {
@@ -425,11 +484,36 @@ export class Zombie extends Humanoid {
       return;
     }
     if (hit.leg) {
-      // Legs soak the hit (half reaches the body); shot out, it goes down.
+      // Legs soak the hit (half reaches the body). One leg shot up and it
+      // hobbles on it; enough leg damage all told and it goes down to crawl.
       this.health -= damage * 0.5;
       this.legHealth -= damage;
+      const i = hit.limb ?? (Math.random() < 0.5 ? 0 : 1);
+      this.legDamage[i] += damage;
+      this.legs[i].thigh.mesh.material = this.legs[i].shin.mesh.material = this._bloodied('pants');
       if (this.health <= 0) this._die(dir, hit);
       else if (this.legHealth <= 0) this._startCrawl(dir);
+      else this._updateInjuries();
+      return;
+    }
+    if (hit.arm) {
+      // An arm hit: shot through, the forearm comes off; hit again on the
+      // stump, the rest of the arm. Little reaches the body.
+      this.health -= damage * 0.4;
+      const i = hit.limb;
+      this.armHealth[i] -= damage;
+      const arm = this.arms[i];
+      if (this.armHealth[i] <= 0 && !arm.lostFore) {
+        arm.lostFore = true;
+        this.onSever?.(this, i, 'fore', dir);
+      } else if (this.armHealth[i] <= 0 && hit.part === 'upper' && !arm.lostUpper) {
+        arm.lostUpper = true;
+        this.onSever?.(this, i, 'upper', dir);
+      }
+      this.leanVel.x += dir.x * this.params.hitShove * 0.5;
+      this.leanVel.y += dir.z * this.params.hitShove * 0.5;
+      if (this.health <= 0) this._die(dir, hit);
+      else this._updateInjuries();
       return;
     }
     this.health -= damage;
@@ -544,7 +628,7 @@ export class Zombie extends Humanoid {
 
     // Close enough: it grabs your ankle from the ground.
     const level = Math.abs(player.pos.y - this.pos.y) < 0.4;
-    if (this.state === 'chase' && level && dist < 0.8 && this.crawlDelay <= 0 && this.grabCooldown <= 0 && world.grapple.canGrab()) {
+    if (this.state === 'chase' && level && dist < 0.8 && this.crawlDelay <= 0 && this.grabCooldown <= 0 && this.canGrab && world.grapple.canGrab()) {
       world.grapple.grab(this);
     }
   }
