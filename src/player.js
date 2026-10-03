@@ -223,6 +223,12 @@ export class Player extends Humanoid {
       // Vault one-handed with the gun kept; climb with both hands, gun swung aside.
       this.startTraversal(ledge, traversalTiming(ledge, this.pos.y));
       this.parkourHint = null;
+      // Start moving this frame; skipping it is a one-frame stall.
+      this._updateTraversal(dt);
+      this._updateRecoil(dt);
+      this._updateYaws(dt);
+      this._updateLean(dt);
+      this._updateDrops(dt);
       this._poseBody(dt);
       return;
     }

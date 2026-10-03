@@ -260,14 +260,31 @@ export function heightAt(level, x, z, maxY = Infinity) {
  * `edge` is where the hands go (on the top surface at the near edge) and
  * `end` is where the feet finish.
  */
-export function findLedge(level, pos, dir) {
+// Face the obstacle: a move that meets a face within 60 degrees of square is
+// turned to go straight at it, so feet and knees meet the face the way the
+// keys assume. Steeper than that, the move keeps the way you were heading.
+function squareUp(c, pos, dir) {
+  const [lx, lz] = toLocal(c, pos.x, pos.z);
+  const alongX = Math.abs(lx) - c.hx > Math.abs(lz) - c.hz;
+  // Only when the straight line to the face still lands on it, not past its end.
+  if (Math.abs(alongX ? lz : lx) > (alongX ? c.hz : c.hx) - 0.3) return dir;
+  const nx = alongX ? -Math.sign(lx) : 0;
+  const nz = alongX ? 0 : -Math.sign(lz);
+  // Box space -> world.
+  const wx = nx * c.cos + nz * c.sin;
+  const wz = -nx * c.sin + nz * c.cos;
+  return wx * dir.x + wz * dir.z > 0.5 ? new THREE.Vector3(wx, 0, wz) : dir;
+}
+
+export function findLedge(level, pos, dir0) {
   const feet = pos.y;
   for (const reach of [0.35, 0.55, 0.8]) {
-    const px = pos.x + dir.x * reach;
-    const pz = pos.z + dir.z * reach;
+    const px = pos.x + dir0.x * reach;
+    const pz = pos.z + dir0.z * reach;
     for (let c of level.colliders) {
       const rise = c.top - feet;
       if (!c.climb || rise < 0.35 || rise > 1.6 || !contains(c, px, pz)) continue;
+      const dir = squareUp(c, pos, dir0);
       // Ignore boxes we're already standing on top of.
       if (heightAt(level, px, pz, feet + STEP_UP) > feet + 0.05) continue;
 

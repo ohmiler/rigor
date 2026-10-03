@@ -523,7 +523,7 @@ function checkMove(testIndex, steps = 50) {
   const saved = state.test;
   state.test = testIndex;
   const body = subject();
-  const worst = { hand: [0, 0], leg: [0, 0], inside: {} };
+  const worst = { hand: [0, 0], leg: [0, 0], inside: {}, speed: {} };
   const depthInside = (c, p) => {
     const dx = p.x - c.x;
     const dz = p.z - c.z;
@@ -534,6 +534,28 @@ function checkMove(testIndex, steps = 50) {
   };
   let ok = true;
   const lastBend = [null, null];
+  // Speeds are measured every step of the real-time run (not per sample), so a
+  // limb that snaps between two close keys shows up here even if it looks fine
+  // at the lab's slow playback.
+  const prev = {};
+  const speedOf = (name, v, h) => {
+    const last = prev[name];
+    prev[name] = v.clone();
+    return last ? v.distanceTo(last) / h : 0;
+  };
+  const trackSpeeds = (k, h) => {
+    const note = (key, name, v) => {
+      if (!worst.speed[key] || v > worst.speed[key][0]) worst.speed[key] = [v, k, name];
+    };
+    note('hips', 'hips', speedOf('hips', body.pelvisPos, h));
+    body.legs.forEach((l, j) => note('foot', j ? 'R' : 'L', speedOf(`a${j}`, l.ankle, h)));
+    // A hand that has let go of the ledge should still be on its gun grip.
+    ['left', 'right'].forEach((hn, j) => {
+      if (body.handPlant[j] > 0.3) return;
+      const gap = body.arms[j].wrist.distanceTo(body.hands[hn].target);
+      if (!worst.gun || gap > worst.gun[0]) worst.gun = [gap, k, j ? 'R' : 'L'];
+    });
+  };
   const measure = (k) => {
     ['left', 'right'].forEach((h, j) => {
       // Only count a hand meant to be firmly on the ledge, not one peeling off.
@@ -601,6 +623,7 @@ function checkMove(testIndex, steps = 50) {
       body._updateLean(h);
       body._poseBody(h);
       t += h;
+      trackSpeeds(t / duration, h);
       if (t >= next) {
         next += duration / steps;
         measure(t / duration);
@@ -620,6 +643,10 @@ function checkMove(testIndex, steps = 50) {
   if (worst.flick && worst.flick[0] > 0.04) {
     issues.push(`${worst.flick[2]} knee flicks ${Math.round(worst.flick[0] * 100)} cm @ ${Math.round(worst.flick[1] * 100)}%`);
   }
+  // Fast but human: a jogging vault's hips stay under ~5 m/s, a foot under ~12 (it drops fast off a far edge).
+  if (worst.speed.hips?.[0] > 5) issues.push(`hips whip ${worst.speed.hips[0].toFixed(1)} m/s @ ${Math.round(worst.speed.hips[1] * 100)}%`);
+  if (worst.speed.foot?.[0] > 12) issues.push(`${worst.speed.foot[2]} foot whips ${worst.speed.foot[0].toFixed(1)} m/s @ ${Math.round(worst.speed.foot[1] * 100)}%`);
+  if (worst.gun?.[0] > 0.2) issues.push(`${worst.gun[2]} hand ${Math.round(worst.gun[0] * 100)} cm off its grip @ ${Math.round(worst.gun[1] * 100)}%`);
   for (const [name, w] of Object.entries(worst.inside)) issues.push(`${name} inside ${cm(w)}`);
   return `${issues.length ? '⚠' : '✓'} ${TESTS[testIndex].name}${issues.length ? ': ' + issues.join(', ') : ''}`;
 }

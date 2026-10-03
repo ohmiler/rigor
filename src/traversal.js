@@ -18,8 +18,8 @@ import { TRAVERSAL_KEYS } from './traversal-keys.js';
 export function traversalTiming(ledge, feetY) {
   const rise = ledge.top - feetY;
   return ledge.type === 'vault'
-    ? { duration: 0.62, bothHands: false }
-    : { duration: 0.7 + 0.35 * rise, bothHands: true };
+    ? { duration: 0.95, bothHands: false }
+    : { duration: 0.8 + 0.35 * rise, bothHands: true };
 }
 
 // How far ahead (+) or behind (-) each channel runs, as a fraction of the move.
