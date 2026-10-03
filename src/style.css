@@ -423,3 +423,73 @@ body:not(.dev) .dev-only {
   color: #e0a35a;
   font-size: 14px;
 }
+
+/* Ammo: rounds in the gun, big; spare rounds beside it. */
+#ammo {
+  position: fixed;
+  right: 18px;
+  bottom: 16px;
+  text-align: right;
+  color: #f1f4fa;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.7);
+  pointer-events: none;
+  font-variant-numeric: tabular-nums;
+}
+#ammo[hidden] {
+  display: none;
+}
+#ammo .mag {
+  font-size: 40px;
+  font-weight: 700;
+}
+#ammo .reserve {
+  margin-left: 6px;
+  font-size: 18px;
+  color: #b9c3d6;
+}
+#ammo .reserve::before {
+  content: '/ ';
+  color: #7f8aa0;
+}
+#ammo .state {
+  min-height: 16px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  color: #b9c3d6;
+}
+#ammo.low .mag,
+#ammo.low .state {
+  color: #ffc85a;
+}
+#ammo.empty .mag,
+#ammo.empty .state {
+  color: #ff5a5a;
+}
+
+#pickup-note {
+  position: fixed;
+  right: 18px;
+  bottom: 92px;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.7);
+  pointer-events: none;
+  animation: pickup-rise 1.6s ease-out forwards;
+}
+#pickup-note[hidden] {
+  display: none;
+}
+#pickup-note.ammo {
+  color: #ffc85a;
+}
+#pickup-note.medkit {
+  color: #7ee2a8;
+}
+@keyframes pickup-rise {
+  from { transform: translateY(8px); opacity: 0; }
+  15% { transform: translateY(0); opacity: 1; }
+  70% { opacity: 1; }
+  to { transform: translateY(-14px); opacity: 0; }
+}

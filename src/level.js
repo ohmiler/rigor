@@ -40,6 +40,7 @@ export function buildStreet(scene) {
     start: new THREE.Vector3(0, 0, 3),
     goal: { pos: new THREE.Vector3(0, 0, STREET_LENGTH - 6), radius: 2.6 },
     zombieSpawns: [],
+    pickupSpots: [], // { type: 'ammo' | 'medkit', pos }
     lamps: [],
     goalParts: null,
   };
@@ -214,6 +215,23 @@ export function buildStreet(scene) {
   flare.position.copy(level.goal.pos).setY(0.6);
   root.add(goalRing, goalDisc, beam, flare);
   level.goalParts = { goalRing, goalDisc, beam, flare };
+
+  // ------------------------------------------------------------ supplies
+  // Where ammo and medkits can turn up (pickups.js rolls which do each run).
+  // The best ones are up on car roofs and dumpster lids: worth the climb, and
+  // a moment out of reach while you take them.
+  const supply = (type, x, z) => level.pickupSpots.push({ type, pos: new THREE.Vector3(x, heightAt(level, x, z), z) });
+  supply('ammo', -2.03, 13.8); // roof of the first car: learn to climb for it
+  supply('ammo', -5.4, 28.6); // behind the first dumpster
+  supply('medkit', 5.0, 37); // sidewalk by the pile-up
+  supply('ammo', 0, 45.8); // past the barrier line
+  supply('ammo', 5.3, 47); // dumpster lid
+  supply('ammo', 2.09, 58.2); // car roof
+  supply('medkit', -5.3, 66);
+  supply('ammo', 3.8, 78.6); // round the back of the sideways car
+  supply('ammo', 5.2, 91);
+  supply('medkit', 5.2, 99); // dumpster lid
+  supply('ammo', 0.5, 105.2); // between the last barriers
 
   // ------------------------------------------------------------ zombies
   // Scattered down the street, thicker toward the end.

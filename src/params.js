@@ -64,6 +64,9 @@ export const DEFAULTS = {
   // Weapon & recoil
   fireRate: 600, // rounds per minute
   magSize: 30,
+  startReserve: 30, // spare rounds at the start of a run, on top of a full mag
+  ammoPickup: 15, // rounds in an ammo box
+  medkitHeal: 35, // health from a medkit (left lying if you're already at full)
   autoReload: true,
   spread: 1.0, // degrees of random cone
   recoilKick: 1.4, // backward velocity impulse per shot (m/s)

@@ -118,6 +118,9 @@ export function createPanel(params, zparams, player, { onSkeleton, onSpawn, onFu
   recoil.add(params, 'fireRate', 60, 1200, 10).name('Fire rate (rpm)');
   recoil.add(params, 'magSize', 1, 100, 1).name('Mag size');
   recoil.add(params, 'autoReload').name('Auto reload');
+  recoil.add(params, 'startReserve', 0, 300, 5).name('Spare rounds at start');
+  recoil.add(params, 'ammoPickup', 0, 90, 1).name('Rounds per ammo box');
+  recoil.add(params, 'medkitHeal', 0, 100, 1).name('Medkit heals');
   recoil.add(params, 'bulletDamage', 1, 200, 1).name('Bullet damage');
   recoil.add(params, 'headshotMultiplier', 1, 10, 0.5).name('Headshot ×');
   recoil.add(params, 'spread', 0, 10, 0.1).name('Spread °');

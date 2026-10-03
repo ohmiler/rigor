@@ -17,7 +17,8 @@ import './lab.css';
 // It uses the game's own body and traversal code, so what you tune here is
 // exactly what the game does.
 
-const params = { ...loadParams(), flashlightOn: false, night: false, faceMouse: false, showSkeleton: false };
+// Endless spare rounds: the lab is for testing moves, not rationing ammo.
+const params = { ...loadParams(), flashlightOn: false, night: false, faceMouse: false, showSkeleton: false, startReserve: Infinity };
 const zparams = loadParams(ZOMBIE_DEFAULTS, ZOMBIE_KEY);
 
 // ---------------------------------------------------------------- scene

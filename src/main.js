@@ -5,6 +5,7 @@ import { createPanel } from './panel.js';
 import { Effects } from './effects.js';
 import { Gore } from './gore.js';
 import { Grapple } from './grapple.js';
+import { Pickups } from './pickups.js';
 import { buildStreet, collideCircle, insideCollider, heightAt, findLedge, solidAt, STREET_LENGTH } from './level.js';
 import { Humanoid } from './humanoid.js';
 import { loadParams, ZOMBIE_DEFAULTS, ZOMBIE_KEY, VISIBILITY } from './params.js';
@@ -106,6 +107,34 @@ const player = new Player(scene, params);
 player.teleport(level.start);
 const effects = new Effects(scene, level.meshes);
 const gore = new Gore(scene);
+const pickups = new Pickups(scene, level.pickupSpots);
+
+// Walking over supplies. A medkit is left lying if you're already at full health.
+const pickupNote = document.getElementById('pickup-note');
+let pickupNoteTimer = 0;
+function notePickup(text, kind) {
+  pickupNote.textContent = text;
+  pickupNote.className = kind;
+  // Restart the rise-and-fade even if the last note is still showing.
+  pickupNote.hidden = true;
+  void pickupNote.offsetWidth;
+  pickupNote.hidden = false;
+  clearTimeout(pickupNoteTimer);
+  pickupNoteTimer = setTimeout(() => (pickupNote.hidden = true), 1600);
+}
+function takePickup(type) {
+  if (type === 'ammo') {
+    player.reserve += params.ammoPickup;
+    notePickup(`+${params.ammoPickup} ROUNDS`, 'ammo');
+    if (player.ammo === 0 && params.autoReload) player.startReload(); // ran dry before this
+    return true;
+  }
+  if (player.health >= params.maxHealth) return false;
+  const before = player.health;
+  player.health = Math.min(player.health + params.medkitHeal, params.maxHealth);
+  notePickup(`+${Math.round(player.health - before)} HEALTH`, 'medkit');
+  return true;
+}
 
 // Feedback for the grab loop: red flash on bites, slow motion on death.
 let hurtFlash = 0;
@@ -138,6 +167,7 @@ function restart() {
   escaped = false;
   document.getElementById('dead').hidden = true;
   document.getElementById('won').hidden = true;
+  pickups.reset();
   spawnLevelZombies();
 }
 
@@ -253,7 +283,7 @@ function updateWorld(dt, input) {
     const m = Math.floor(runTime / 60);
     const s = Math.floor(runTime % 60).toString().padStart(2, '0');
     document.getElementById('won-sub').textContent =
-      `Time ${m}:${s} · ${kills} killed · ${Math.round(player.health)} health left`;
+      `Time ${m}:${s} · ${kills} killed · ${Math.round(player.health)} health · ${player.ammo + player.reserve} rounds left`;
     document.getElementById('won').hidden = false;
   }
 
@@ -461,6 +491,10 @@ const ui = {
   struggleFill: document.getElementById('struggle-fill'),
   biteFill: document.getElementById('bite-fill'),
   objective: document.getElementById('objective'),
+  ammo: document.getElementById('ammo'),
+  ammoMag: document.querySelector('#ammo .mag'),
+  ammoReserve: document.querySelector('#ammo .reserve'),
+  ammoState: document.querySelector('#ammo .state'),
   parkour: document.getElementById('parkour'),
 };
 const timer = new THREE.Timer();
@@ -481,6 +515,24 @@ function updateUI(real) {
   const hint = player.state === 'normal' && !player.traversal ? player.parkourHint : null;
   ui.parkour.hidden = !hint;
   if (hint) ui.parkour.innerHTML = `<b>SPACE</b> · ${hint.toUpperCase()}`;
+
+  // Ammo: what's in the gun, what's left to reload, and what to do about it.
+  ui.ammoMag.textContent = player.magState === 'gun' ? player.ammo : '–';
+  ui.ammoReserve.textContent = player.reserve;
+  let ammoState = '';
+  let ammoClass = '';
+  if (player.reload.active) ammoState = 'RELOADING';
+  else if (player.ammo === 0 && player.reserve > 0) {
+    ammoState = 'RELOAD · R';
+    ammoClass = 'low';
+  } else if (player.ammo === 0) {
+    ammoState = 'OUT OF AMMO';
+    ammoClass = 'empty';
+  } else if (player.ammo <= params.magSize * 0.25) ammoClass = 'low';
+  if (player.dryFire) ammoClass = 'empty';
+  ui.ammoState.textContent = ammoState;
+  ui.ammo.className = ammoClass;
+  ui.ammo.hidden = player.state === 'dead';
 
   const toGoal = Math.max(player.pos.distanceTo(level.goal.pos) - level.goal.radius, 0);
   ui.objective.textContent = escaped ? 'EXTRACTED' : `EXTRACTION ▲ ${Math.round(toGoal)} m`;
@@ -513,6 +565,7 @@ function frame(timestamp) {
   strugglePresses = 0;
   effects.update(dt);
   gore.update(dt);
+  pickups.update(dt, player, takePickup);
 
   updateCamera(real);
   updateUI(real);
@@ -532,5 +585,5 @@ requestAnimationFrame(frame);
 
 // Dev-only handle for poking at the game from the browser console.
 if (import.meta.env.DEV) {
-  window.__rigor = { player, grapple, gore, params, zparams, level, restart, startGame, get zombies() { return zombies; } };
+  window.__rigor = { player, grapple, gore, params, zparams, level, pickups, restart, startGame, get zombies() { return zombies; } };
 }

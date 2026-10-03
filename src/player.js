@@ -89,6 +89,8 @@ export class Player extends Humanoid {
     // Recoil is a set of springs on the gun: kick back, muzzle climb, sideways yaw.
     this.recoil = { back: 0, backVel: 0, pitch: 0, pitchVel: 0, yaw: 0, yawVel: 0 };
     this.ammo = params.magSize;
+    this.reserve = params.startReserve; // spare rounds to reload from
+    this.dryFire = false; // trigger pulled on an empty gun with nothing to reload
     this.fireCooldown = 0;
     this.onShot = null; // (muzzle: Vector3, dir: Vector3) => void
     this.moveMode = 'jog';
@@ -127,6 +129,8 @@ export class Player extends Humanoid {
     Object.assign(this.reload, { active: false, step: -1, t: 0, label: 'Ready' });
     this.magState = 'gun';
     this.ammo = this.params.magSize;
+    this.reserve = this.params.startReserve;
+    this.dryFire = false;
     this.health = this.params.maxHealth;
     this.state = 'normal';
     this.grabbedBy = null;
@@ -333,8 +337,10 @@ export class Player extends Humanoid {
     const p = this.params;
     this.fireCooldown = Math.max(this.fireCooldown - dt, 0);
     if (!triggerHeld || this.reload.active) return;
+    this.dryFire = false;
     if (this.ammo <= 0) {
-      if (p.autoReload) this.startReload();
+      if (p.autoReload && this.reserve > 0) this.startReload();
+      else if (this.reserve <= 0) this.dryFire = true;
       return;
     }
     while (this.fireCooldown <= 0 && this.ammo > 0) {
@@ -375,7 +381,9 @@ export class Player extends Humanoid {
     casing.castShadow = true;
     this.body.add(casing);
     const vel = localDir(new THREE.Vector3(), this.gunQuat, 1.6 + Math.random(), 1.4 + Math.random(), -0.3);
-    this.drops.push({ mesh: casing, vel: vel.add(this.vel), spin: 25 + Math.random() * 20, floor: 0.006, life: 3 });
+    // Lands on whatever is under it (a car roof, the sidewalk), not the road below.
+    const floor = Humanoid.terrain.heightAt(casing.position.x, casing.position.z, this.pos.y + 0.6) + 0.006;
+    this.drops.push({ mesh: casing, vel: vel.add(this.vel), spin: 25 + Math.random() * 20, floor, life: 3 });
   }
 
   _updateRecoil(dt) {
@@ -393,8 +401,9 @@ export class Player extends Humanoid {
 
   // ---------------------------------------------------------------- reload
 
+  // Nothing to reload from, or nothing to gain: the mag stays in.
   startReload() {
-    if (this.reload.active) return;
+    if (this.reload.active || this.reserve <= 0 || this.ammo >= this.params.magSize) return;
     this.reload.active = true;
     this._startReloadStep(0);
   }
@@ -436,16 +445,20 @@ export class Player extends Humanoid {
         mesh: drop,
         vel: this.vel.clone().add(_v1.set(0, -0.5, 0)),
         spin: (Math.random() - 0.5) * 8,
-        floor: 0.035,
+        floor: Humanoid.terrain.heightAt(drop.position.x, drop.position.z, this.pos.y + 0.6) + 0.035,
         life: 4,
       });
       this.magState = 'none';
+      // Rounds left in the old mag go back to the pile (no punishing a top-up).
+      this.reserve += this.ammo;
       this.ammo = 0;
     } else if (name === 'take') {
       this.magState = 'hand';
     } else if (name === 'seat') {
       this.magState = 'gun';
-      this.ammo = this.params.magSize;
+      const n = Math.min(this.params.magSize, this.reserve);
+      this.reserve -= n;
+      this.ammo = n;
     }
   }
 
@@ -556,7 +569,7 @@ export class Player extends Humanoid {
       `lean fwd ${deg(this.pitch)}° side ${deg(this.roll)}°`,
       `${foot(this.feet[0], 'L')}   ${foot(this.feet[1], 'R')}`,
       `hand error  right ${cm(this.hands.right)} cm · left ${cm(this.hands.left)} cm`,
-      `ammo ${this.ammo}/${p.magSize} · recoil back ${(this.recoil.back * 100).toFixed(1)} cm climb ${deg(this.recoil.pitch)}°`,
+      `ammo ${this.ammo}/${p.magSize} + ${this.reserve} · recoil back ${(this.recoil.back * 100).toFixed(1)} cm climb ${deg(this.recoil.pitch)}°`,
       `reload  ${this.reload.label}`,
       `health ${Math.max(Math.round(this.health), 0)}/${p.maxHealth} · ${this.state}`,
     ].join('\n');
