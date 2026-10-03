@@ -79,7 +79,7 @@ const level = (() => {
     Math.random = random;
   }
 })();
-dressProps(level);
+dressProps(level).then(() => applyEnvironment()); // lit windows follow day and night
 Humanoid.terrain = {
   heightAt: (x, z, maxY) => heightAt(level, x, z, maxY),
   findLedge: (pos, dir) => findLedge(level, pos, dir),
@@ -108,6 +108,7 @@ function applyEnvironment() {
     if (night) bulb.material.color.multiplyScalar(4); // bright enough to glow
   }
   level.goalParts.flare.intensity = night ? 6 : 0;
+  for (const m of level.windowLights ?? []) m.emissiveIntensity = night ? 1.4 : 0;
   renderer.toneMappingExposure = params.exposure;
   for (const b of visibilityButtons.children) b.classList.toggle('on', b.textContent === params.visibility);
 }

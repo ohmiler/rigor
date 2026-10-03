@@ -1,5 +1,5 @@
 // `npm run models`: rebuild public/models/*.glb from the scripts in art/
-// (street props, the player) in Blender, run headless. Finds Blender at
+// (street props, building fronts, the characters) in Blender, run headless. Finds Blender at
 // $BLENDER_PATH, then the usual install places, then on the PATH.
 import { execFileSync } from 'node:child_process';
 import { existsSync, readdirSync } from 'node:fs';
@@ -26,6 +26,6 @@ function findBlender() {
 
 const blender = findBlender();
 console.log(`Using ${blender}`);
-for (const script of ['art/build_props.py', 'art/build_character.py']) {
+for (const script of ['art/build_props.py', 'art/build_character.py', 'art/build_street.py']) {
   execFileSync(blender, ['--background', '--factory-startup', '--python', script, '--', 'public/models'], { stdio: 'inherit' });
 }

@@ -44,6 +44,7 @@ export function buildStreet(scene) {
     pickupSpots: [], // { type: 'ammo' | 'medkit', pos }
     lamps: [],
     props: { car: [], dumpster: [], barrier: [] }, // where the Blender models go (props.js)
+    buildings: [], // street fronts to dress (props.js)
     goalParts: null,
   };
   const root = new THREE.Group();
@@ -87,18 +88,22 @@ export function buildStreet(scene) {
     let z = -4;
     while (z < STREET_LENGTH + 4) {
       const len = rand(7, 14);
-      const height = rand(4, 9.5);
+      // Whole storeys: a 3.6 m shop floor and 3 m floors above (props.js
+      // fits the fronts to them).
+      const floors = Math.round(THREE.MathUtils.clamp((rand(4, 9.5) - 3.6) / 3, 0, 2));
+      const height = 3.6 + 3 * floors;
       const depth = rand(8, 12);
       const color = pick(BUILDING_COLORS);
       const x = side * (EDGE + depth / 2);
       const building = add(block(mat(color), depth, height, len - 0.3, x, height / 2, z + len / 2), { solid: true });
       collider(x, z + len / 2, depth / 2, len / 2, 0, { top: height });
-      // Dark shop windows along the street face.
+      // Dark shop windows along the street face (until the modelled front arrives).
       const face = side * (EDGE - 0.01);
+      const windows = [];
       for (let wz = z + 1.5; wz < z + len - 1.5; wz += 3) {
-        const win = block(MATS.glass, 0.05, 1.4, 1.8, face, 1.6, wz);
-        add(win);
+        windows.push(add(block(MATS.glass, 0.05, 1.4, 1.8, face, 1.6, wz)));
       }
+      level.buildings.push({ side, z0: z, len, floors, height, depth, color, standIns: windows });
       // Some buildings are set back, leaving a recess zombies like to wait in.
       if (Math.random() < 0.25 && z > 12 && z < STREET_LENGTH - 16) {
         level.zombieSpawns.push(new THREE.Vector3(side * (EDGE - 0.8), 0, z + len / 2));
