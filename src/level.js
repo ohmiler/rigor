@@ -60,9 +60,10 @@ export function buildStreet(scene) {
     return mesh;
   };
   // `top` is the walkable height of the box; `climb` means you can get up on
-  // it, `vault` means you go over it instead.
-  const collider = (x, z, hx, hz, yaw = 0, { top = 10, climb = false, vault = false } = {}) => {
-    level.colliders.push({ x, z, hx, hz, cos: Math.cos(yaw), sin: Math.sin(yaw), top, climb, vault });
+  // it, `vault` means you go over it instead; `floor` is ground you simply
+  // step up onto (it never blocks a spawn).
+  const collider = (x, z, hx, hz, yaw = 0, { top = 10, climb = false, vault = false, floor = false } = {}) => {
+    level.colliders.push({ x, z, hx, hz, cos: Math.cos(yaw), sin: Math.sin(yaw), top, climb, vault, floor });
   };
 
   // ------------------------------------------------------------ road
@@ -71,6 +72,8 @@ export function buildStreet(scene) {
   for (const side of [-1, 1]) {
     add(block(MATS.sidewalk, WALK, 0.14, STREET_LENGTH, side * (ROAD_HALF + WALK / 2), 0.07, mid));
     add(block(MATS.curb, 0.18, 0.16, STREET_LENGTH, side * (ROAD_HALF + 0.09), 0.08, mid));
+    collider(side * (ROAD_HALF + WALK / 2), mid, WALK / 2, STREET_LENGTH / 2, 0, { top: 0.14, floor: true });
+    collider(side * (ROAD_HALF + 0.09), mid, 0.09, STREET_LENGTH / 2, 0, { top: 0.16, floor: true });
   }
   for (let z = 4; z < STREET_LENGTH - 2; z += 6) {
     add(block(MATS.paint, 0.14, 0.025, 2.6, 0, 0.025, z));
@@ -379,6 +382,7 @@ export function collideCircle(level, pos, radius, feetY = 0) {
 
 export function insideCollider(level, x, z, margin) {
   return level.colliders.some((c) => {
+    if (c.floor) return false;
     const dx = x - c.x;
     const dz = z - c.z;
     const lx = dx * c.cos - dz * c.sin;

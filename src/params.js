@@ -17,28 +17,36 @@ export const DEFAULTS = {
   // Waist & spine
   maxHipOffset: 55, // degrees the legs may point away from the aim
   hipTurnRate: 10,
+  legTurnRate: 360, // fastest the legs swing round while moving (degrees per second)
   pelvisTwistShare: 0.3, // how much of the waist twist the pelvis takes
+  pivotStart: 45, // degrees the aim may turn from the legs before they step round
+  pivotRate: 180, // degrees per second the legs turn on the spot
+  maxTwist: 80, // most the waist can twist (degrees)
   gunLead: -13, // shoulders turned relative to the gun (degrees)
 
   // Torso physics
   leanAccel: 0.02,
   leanSpeed: 0.03,
+  leanTurn: 0.045, // banking into a curve, per m/s² of sideways pull
   leanStiffness: 60,
   leanDamping: 9,
   maxLean: 25, // degrees
 
   // Height & bob
-  hipHeight: 0.93,
+  hipHeight: 0.97, // nearly straight legs standing; walking, the stance leg straightens mid-stride
   crouch: 0.06,
   bobAmount: 0.035,
+  hipSway: 0.03, // metres the hips shift over the stance foot
+  hipSwing: 0.15, // hip turn per metre the feet are apart (radians)
 
   // Gait & feet
-  strideBase: 0.8,
-  strideScale: 0.25,
+  strideBase: 1.0,
+  strideScale: 0.33,
   dutyWalk: 0.62,
-  dutyRun: 0.42,
+  dutyRun: 0.34,
   stepHeight: 0.14,
   footSpread: 0.11,
+  footPivotRate: 4, // how fast a planted foot swivels on its ball to follow the legs (rad/s)
   footLead: 1.0,
   settleSpeed: 1.2,
   settleDistance: 0.1,
@@ -120,21 +128,29 @@ export const ZOMBIE_DEFAULTS = {
   acceleration: 4,
   maxHipOffset: 30,
   hipTurnRate: 4,
+  legTurnRate: 180,
   pelvisTwistShare: 0.4,
+  pivotStart: 45,
+  pivotRate: 120,
+  maxTwist: 80,
   leanAccel: 0.03,
   leanSpeed: 0.05,
+  leanTurn: 0.04,
   leanStiffness: 30,
   leanDamping: 5,
   maxLean: 40,
   hipHeight: 0.88,
   crouch: 0.03,
   bobAmount: 0.05,
+  hipSway: 0.045,
+  hipSwing: 0.2,
   strideBase: 0.7,
   strideScale: 0.2,
   dutyWalk: 0.66,
   dutyRun: 0.56,
   stepHeight: 0.08,
   footSpread: 0.13,
+  footPivotRate: 1.5,
   footLead: 1.0,
   settleSpeed: 0.8,
   settleDistance: 0.15,

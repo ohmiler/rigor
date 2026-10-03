@@ -71,12 +71,17 @@ export function createPanel(params, zparams, player, { onSkeleton, onSpawn, onFu
   const waist = gui.addFolder('Waist & spine').close();
   waist.add(params, 'maxHipOffset', 0, 90, 1).name('Max legs↔aim °');
   waist.add(params, 'hipTurnRate', 1, 30, 0.5).name('Hip turn rate');
+  waist.add(params, 'legTurnRate', 90, 1080, 10).name('Max leg turn °/s');
   waist.add(params, 'pelvisTwistShare', 0, 1, 0.05).name('Pelvis twist share');
+  waist.add(params, 'pivotStart', 10, 90, 1).name('Turn-in-place start °');
+  waist.add(params, 'pivotRate', 60, 540, 10).name('Turn-in-place °/s');
+  waist.add(params, 'maxTwist', 30, 120, 1).name('Max waist twist °');
   waist.add(params, 'gunLead', -40, 40, 1).name('Gun lead °');
 
   const torso = gui.addFolder('Torso physics').close();
   torso.add(params, 'leanAccel', 0, 0.08, 0.002).name('Lean from accel');
   torso.add(params, 'leanSpeed', 0, 0.1, 0.002).name('Lean from speed');
+  torso.add(params, 'leanTurn', 0, 0.1, 0.002).name('Bank into turns');
   torso.add(params, 'leanStiffness', 5, 200, 1).name('Spring stiffness');
   torso.add(params, 'leanDamping', 0, 30, 0.5).name('Spring damping');
   torso.add(params, 'maxLean', 0, 45, 1).name('Max lean °');
@@ -85,6 +90,8 @@ export function createPanel(params, zparams, player, { onSkeleton, onSpawn, onFu
   height.add(params, 'hipHeight', 0.7, 1.0, 0.01).name('Hip height');
   height.add(params, 'crouch', 0, 0.2, 0.005).name('Run crouch');
   height.add(params, 'bobAmount', 0, 0.1, 0.002).name('Bob');
+  height.add(params, 'hipSway', 0, 0.08, 0.002).name('Hip sway');
+  height.add(params, 'hipSwing', 0, 0.5, 0.01).name('Hip swing');
 
   const gait = gui.addFolder('Gait & feet').close();
   gait.add(params, 'strideBase', 0.3, 1.5, 0.01).name('Stride base');
