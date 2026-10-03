@@ -300,10 +300,18 @@ const keysLocked = () => document.fullscreenElement && navigator.keyboard?.lock;
 // Ctrl is the walk key, but Ctrl+W/T/N are browser shortcuts a page can't
 // cancel. Fullscreen with the Keyboard Lock API (Chrome/Edge) captures them;
 // outside fullscreen a leave-page prompt is the safety net for Ctrl+W.
+// Only the keys the game uses (and that Ctrl turns into browser shortcuts:
+// W closes the tab, T/N open new ones, R reloads...). Locking every key would
+// take Esc too, and the browser then makes you hold Esc to leave fullscreen.
+const LOCKED_KEYS = [
+  'KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyR', 'KeyE', 'KeyF', 'KeyV', 'KeyP', 'KeyT', 'KeyN', 'KeyB',
+  'Space', 'ControlLeft', 'ControlRight', 'ShiftLeft', 'ShiftRight', 'Tab',
+];
 async function enterFullscreen() {
   try {
     if (!document.fullscreenElement) await document.documentElement.requestFullscreen();
-    await navigator.keyboard?.lock?.();
+    await navigator.keyboard?.lock?.(LOCKED_KEYS);
+    showToast('Press Esc to leave fullscreen');
   } catch {
     showToast('Fullscreen was blocked by the browser');
   }
