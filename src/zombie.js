@@ -2,13 +2,11 @@ import * as THREE from 'three';
 import { Humanoid } from './humanoid.js';
 import { traversalTiming } from './traversal.js';
 import { DEG, dampAngle, damp, localPoint } from './rig-utils.js';
+import { Ragdoll, RAGDOLL } from './ragdoll.js';
 
 const _v1 = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
 const _desired = new THREE.Vector3();
-const _m1 = new THREE.Matrix4();
-const _m2 = new THREE.Matrix4();
-const UP = new THREE.Vector3(0, 1, 0);
 
 const pick = (list) => list[Math.floor(Math.random() * list.length)];
 const rand = (a, b) => a + Math.random() * (b - a);
@@ -21,6 +19,7 @@ const HAIR = ['#1f1b17', '#2d241c', '#4a3b2c', null];
 export const HIT_RADIUS = 0.28;
 export const HIT_HEIGHT = 1.75;
 const HEAD_HEIGHT = 1.42;
+const LEG_HEIGHT = 0.8; // hits below this are leg shots
 
 /**
  * Same body system as the player, tuned to look broken: a limp on one leg,
@@ -63,8 +62,10 @@ export class Zombie extends Humanoid {
 
     this.dead = false;
     this.deathT = 0;
-    this.fallAxis = new THREE.Vector3();
     this.removed = false;
+    this.legHealth = params.legHealth ?? 60;
+    this.ragdoll = null; // dead, or crawling on its arms with its legs shot out
+    this.crawlDelay = 0;
 
     this._applyLimp();
     this._settle();
@@ -81,8 +82,8 @@ export class Zombie extends Humanoid {
   // ---------------------------------------------------------------- update
 
   update(dt, world) {
-    if (this.dead) {
-      this._updateDeath(dt);
+    if (this.ragdoll) {
+      this._updateRagdoll(dt, world);
       return;
     }
     const p = this.params;
@@ -249,9 +250,11 @@ export class Zombie extends Humanoid {
 
   // ---------------------------------------------------------------- damage
 
-  // Ray vs. vertical capsule (good enough for a top-down shooter).
+  // Ray vs. vertical capsule (good enough for a top-down shooter); a crawler
+  // lying on the road is tested limb by limb instead.
   raycast(origin, dir) {
     if (this.dead) return null;
+    if (this.ragdoll) return this.ragdoll.raycast(origin, dir);
     const ox = origin.x - this.pos.x;
     const oz = origin.z - this.pos.z;
     const a = dir.x * dir.x + dir.z * dir.z;
@@ -264,19 +267,44 @@ export class Zombie extends Humanoid {
     if (t < 0) return null;
     const y = origin.y + dir.y * t - this.pos.y; // height up the body
     if (y < 0 || y > HIT_HEIGHT) return null;
-    return { distance: t, headshot: y > HEAD_HEIGHT };
+    return { distance: t, headshot: y > HEAD_HEIGHT, leg: y < LEG_HEIGHT, height: this.pos.y + y };
   }
 
-  takeHit(dir, damage) {
+  takeHit(dir, damage, hit = {}) {
     if (this.dead) return;
-    this.health -= damage;
     this.state = 'chase';
     this.stagger = 0.35;
+    if (this.ragdoll) {
+      // A crawler takes it on the ground: it jerks with the bullet.
+      this.health -= damage;
+      this.ragdoll.impulse(_v1.copy(dir).multiplyScalar(1.2), { height: this.ragdoll.chest.y });
+      this.crawlDelay = Math.max(this.crawlDelay, 0.4);
+      if (this.health <= 0) this._die(dir, hit);
+      return;
+    }
+    if (hit.leg) {
+      // Legs soak the hit (half reaches the body); shot out, it goes down.
+      this.health -= damage * 0.5;
+      this.legHealth -= damage;
+      if (this.health <= 0) this._die(dir, hit);
+      else if (this.legHealth <= 0) this._startCrawl(dir);
+      return;
+    }
+    this.health -= damage;
     // Shove the torso spring and throw the arms back along the bullet.
     this.leanVel.x += dir.x * this.params.hitShove;
     this.leanVel.y += dir.z * this.params.hitShove;
     for (const h of [this.hands.left, this.hands.right]) h.vel.addScaledVector(dir, 3);
-    if (this.health <= 0) this._die(dir);
+    if (this.health <= 0) this._die(dir, hit);
+  }
+
+  // Grab struggles and bites rock the torso; on the ground, they rock the body.
+  jolt(dir, amount) {
+    if (this.ragdoll) {
+      if (!this.dead) this.ragdoll.nudge(RAGDOLL.CHEST, _v1.set(dir.x, 0, dir.z).multiplyScalar(amount * 0.15));
+      return;
+    }
+    super.jolt(dir, amount);
   }
 
   alert() {
@@ -288,35 +316,84 @@ export class Zombie extends Humanoid {
     this.state = 'chase';
     this.stagger = 1.4;
     this.grabCooldown = 2.5;
+    if (this.ragdoll) {
+      this.ragdoll.impulse(_v1.copy(dir).multiplyScalar(strength * 0.4).setY(0.6));
+      this.crawlDelay = 1.2;
+      return;
+    }
     this.jolt(dir, strength);
     this.vel.addScaledVector(dir, strength * 0.7);
   }
 
-  _die(dir) {
+  // Dead: the body goes limp from the pose it was in, carrying its momentum,
+  // and the bullet knocks it the way it was going at the height it hit.
+  _die(dir, hit = {}) {
     this.dead = true;
     this.deathT = 0;
-    // Tip over around the feet, in the direction the last bullet was going.
-    _v1.set(dir.x, 0, dir.z).normalize();
-    this.fallAxis.crossVectors(UP, _v1).normalize();
-    this.pivot = this.pos.clone();
-    this.body.matrixAutoUpdate = false;
+    for (const m of this.markers) m.visible = false;
+    if (!this.ragdoll) this.ragdoll = new Ragdoll(this, { vel: this.vel });
+    this.ragdoll.drive = null;
+    for (const p of this.ragdoll.particles) p.pinned = false;
+    const height = hit.height ?? this.pos.y + (hit.headshot ? 1.5 : 1.1);
+    this.ragdoll.impulse(_v1.copy(dir).setY(0).normalize().multiplyScalar(hit.headshot ? 3.2 : 2.4), { height, spread: 0.45 });
+  }
+
+  // Legs shot out from under it: it drops (legs swept back along the bullet,
+  // so it falls on its face), lies there a moment, then starts to crawl.
+  _startCrawl(dir) {
+    this.ragdoll = new Ragdoll(this, { vel: this.vel });
+    _v1.copy(dir).setY(0).normalize();
+    this.ragdoll.impulse(_v2.copy(_v1).multiplyScalar(2.6), { height: this.pos.y + 0.3, spread: 0.3 });
+    this.ragdoll.impulse(_v2.copy(_v1).multiplyScalar(-1.4), { height: this.pos.y + 1.3, spread: 0.35 });
+    this.crawlDelay = 1.3;
+    this.state = 'chase';
     for (const m of this.markers) m.visible = false;
   }
 
-  _updateDeath(dt) {
-    this.deathT += dt;
-    const t = Math.min(this.deathT / 0.75, 1);
-    // Accelerate like a falling plank, then a small bounce on the ground.
-    const fall = t * t;
-    const bounce = this.deathT > 0.75 ? Math.sin((this.deathT - 0.75) * 18) * Math.exp(-(this.deathT - 0.75) * 9) * 0.08 : 0;
-    const angle = (86 * fall) * DEG - bounce;
-    _m1.makeTranslation(-this.pivot.x, -this.pivot.y, -this.pivot.z);
-    _m2.makeRotationAxis(this.fallAxis, angle);
-    this.body.matrix.makeTranslation(this.pivot.x, this.pivot.y, this.pivot.z).multiply(_m2).multiply(_m1);
-    this.body.matrixWorldNeedsUpdate = true;
-    if (this.deathT > this.params.corpseTime) {
-      this.dispose();
-      this.removed = true;
+  _updateRagdoll(dt, world) {
+    const rd = this.ragdoll;
+    this.time += dt;
+    if (this.dead) {
+      rd.update(dt);
+      rd.apply();
+      this.deathT += dt;
+      if (this.deathT > this.params.corpseTime) {
+        this.dispose();
+        this.removed = true;
+      }
+      return;
+    }
+
+    // Crawling after you.
+    const p = this.params;
+    const player = world.player;
+    this.player = player;
+    this.grabCooldown = Math.max((this.grabCooldown ?? 0) - dt, 0);
+    this.crawlDelay -= dt;
+    const target = player.state === 'dead' ? player.deathPos : player.pos;
+    if (player.state === 'dead') this.state = 'feed';
+    else if (this.state !== 'grab') this.state = 'chase';
+    _v1.subVectors(target, rd.chest).setY(0);
+    const dist = _v1.length();
+
+    let mode = 'idle';
+    if (this.state === 'grab') mode = 'grab';
+    else if (this.crawlDelay <= 0 && !(this.state === 'feed' && dist < 0.6)) mode = 'crawl';
+    rd.drive = {
+      mode,
+      target,
+      speed: p.crawlSpeed * this.quirk.speed,
+      reach: [player.legs[0].ankle, player.legs[1].ankle], // grabbing at your ankles
+      onPlant: (pos) => this.onFootstep?.({ pos, stepScale: 0 }), // a hand slapping the road
+    };
+    rd.update(dt);
+    rd.apply();
+    this.pos.set(rd.pelvis.x, Humanoid.terrain.heightAt(rd.pelvis.x, rd.pelvis.z, rd.pelvis.y + 0.3), rd.pelvis.z);
+
+    // Close enough: it grabs your ankle from the ground.
+    const level = Math.abs(player.pos.y - this.pos.y) < 0.4;
+    if (this.state === 'chase' && level && dist < 0.8 && this.crawlDelay <= 0 && this.grabCooldown <= 0 && world.grapple.canGrab()) {
+      world.grapple.grab(this);
     }
   }
 }

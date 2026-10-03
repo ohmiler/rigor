@@ -39,6 +39,8 @@ export function createPanel(params, zparams, player, { onSkeleton, onSpawn, onFu
   zombies.add(zparams, 'detectRange', 2, 40, 0.5).name('Sight range');
   zombies.add(zparams, 'hearingRange', 0, 60, 1).name('Gunshot hearing');
   zombies.add(zparams, 'health', 10, 500, 5).name('Health');
+  zombies.add(zparams, 'legHealth', 10, 300, 5).name('Leg health (then crawls)');
+  zombies.add(zparams, 'crawlSpeed', 0.1, 1.5, 0.05).name('Crawl speed');
   zombies.add(zparams, 'hitShove', 0, 8, 0.1).name('Hit shove');
   zombies.add(zparams, 'limp', 0, 1, 0.05).name('Limp (on spawn)');
   zombies.add(zparams, 'hunch', 0, 45, 1).name('Hunch °');

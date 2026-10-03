@@ -61,6 +61,8 @@ Humanoid.terrain = {
   heightAt: (x, z, maxY) => heightAt(level, x, z, maxY),
   findLedge: (pos, dir) => findLedge(level, pos, dir),
   solidAt: (p) => solidAt(level, p),
+  // Ragdolls: shove a ball out of anything taller than `stepUp` above its bottom.
+  collide: (pos, radius, bottom, stepUp) => collideCircle(level, pos, radius, bottom, stepUp),
 };
 
 // Day is kept around as a debugging view; night is the game.
@@ -164,7 +166,7 @@ const grapple = new Grapple(player, gore, params, {
     shake = params.cameraShake * 6;
     deathSlow = 1.6;
     document.getElementById('dead-sub').textContent =
-      mode === 'halves' ? 'Torn in half.' : 'They took your arm.';
+      mode === 'halves' ? 'They pulled you apart.' : 'Torn limb from limb.';
     setTimeout(() => (document.getElementById('dead').hidden = false), 900);
   },
 });
@@ -260,6 +262,7 @@ player.onShot = (muzzle, dir) => {
   }
   let target = null;
   let headshot = false;
+  let targetHit = null;
   for (const z of zombies) {
     const hit = z.raycast(muzzle, dir);
     if (hit && hit.distance < distance) {
@@ -267,6 +270,7 @@ player.onShot = (muzzle, dir) => {
       kind = 'flesh';
       target = z;
       headshot = hit.headshot;
+      targetHit = hit;
     }
   }
   effects.shot(muzzle, dir, distance, kind);
@@ -276,7 +280,7 @@ player.onShot = (muzzle, dir) => {
     const hitPoint = muzzle.clone().addScaledVector(dir, distance);
     gore.spray(hitPoint, dir, headshot ? 24 : 10, headshot ? 3.5 : 2.5);
     const wasDead = target.dead;
-    target.takeHit(dir, params.bulletDamage * (headshot ? params.headshotMultiplier : 1));
+    target.takeHit(dir, params.bulletDamage * (headshot ? params.headshotMultiplier : 1), targetHit);
     sound.fleshHit(hitPoint, headshot);
     if (!wasDead && target.dead) kills++;
   }
@@ -288,6 +292,28 @@ player.onShot = (muzzle, dir) => {
 };
 
 const NO_INPUT = { x: 0, z: 0, walk: false, sprint: false, fire: false, jump: false, aimPoint: null };
+
+// Legs passing through a body on the road shove it: corpses get kicked and
+// trodden on, and so do the pieces of a torn-apart player.
+const _shin = new THREE.Vector3();
+const _legVel = new THREE.Vector3();
+function kickBodies() {
+  const bodies = zombies.filter((z) => z.dead && z.ragdoll).map((z) => z.ragdoll);
+  if (player.ragdoll) bodies.push(player.ragdoll);
+  if (!bodies.length) return;
+  const walkers = zombies.filter((z) => !z.ragdoll && !z.traversal);
+  if (player.state !== 'dead' && !player.traversal) walkers.push(player);
+  for (const w of walkers) {
+    for (const rd of bodies) {
+      if (rd.pelvis.distanceToSquared(w.pos) > 2.5 * 2.5) continue;
+      for (const leg of w.legs) {
+        _legVel.copy(w.vel).multiplyScalar(1.4);
+        rd.push(leg.ankle, 0.07, _legVel);
+        rd.push(_shin.lerpVectors(leg.knee, leg.ankle, 0.5), 0.06, _legVel);
+      }
+    }
+  }
+}
 
 function updateWorld(dt, input) {
   player.update(dt, escaped ? NO_INPUT : input);
@@ -310,7 +336,7 @@ function updateWorld(dt, input) {
   // Bodies can't overlap walls, cars or each other (mid-climb, the path rules).
   if (player.state !== 'dead' && !player.traversal) collideCircle(level, player.pos, 0.3, player.pos.y);
   for (const z of zombies) {
-    if (z.dead || z.traversal) continue;
+    if (z.dead || z.traversal || z.ragdoll) continue; // bodies on the road are ragdolls
     collideCircle(level, z.pos, 0.3, z.pos.y);
     // Grabbers and feeders are meant to be up close; different heights don't touch.
     if (player.state !== 'normal' || z.state === 'grab' || player.traversal) continue;
@@ -632,6 +658,7 @@ function frame(timestamp) {
   updateCamera(real);
   updateUI(real);
   updateSounds(dt, real);
+  if (dt > 0) kickBodies();
 
   hudTimer -= real;
   if (DEV && hudTimer <= 0) {
@@ -648,5 +675,14 @@ requestAnimationFrame(frame);
 
 // Dev-only handle for poking at the game from the browser console.
 if (import.meta.env.DEV) {
-  window.__rigor = { player, grapple, gore, params, zparams, level, pickups, sound, restart, startGame, get zombies() { return zombies; } };
+  // Run the world forward without rendering (the tab may be hidden in tests).
+  const advance = (secs, input = NO_INPUT) => {
+    for (let t = 0; t < secs; t += STEP) {
+      updateWorld(STEP, { ...input });
+      grapple.update(STEP, 0);
+      gore.update(STEP);
+      kickBodies();
+    }
+  };
+  window.__rigor = { player, grapple, gore, params, zparams, level, pickups, sound, restart, startGame, advance, get zombies() { return zombies; } };
 }

@@ -30,7 +30,7 @@ const Z_AXIS = new THREE.Vector3(0, 0, 1);
 // Points on the foot, in the foot block's frame (right, up, forward). A foot
 // standing flat has its sole on the ground with the ankle 7 cm above, 3 cm
 // behind the block's centre.
-const FOOT_ANKLE = new THREE.Vector3(0, 0.035, -0.03);
+export const FOOT_ANKLE = new THREE.Vector3(0, 0.035, -0.03);
 const FOOT_HEEL = new THREE.Vector3(0, -0.035, -0.085);
 const FOOT_TOE_HINGE = new THREE.Vector3(0, -0.01, 0.085); // the ball, where the toes bend
 const FOOT_SOLE = new THREE.Vector3(0, -0.035, -0.03); // on the sole, under the ankle

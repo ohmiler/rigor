@@ -119,6 +119,8 @@ export const ZOMBIE_DEFAULTS = {
   climbDelay: 4, // seconds a zombie paws at a car before clambering up after you
   climbSlowness: 2.2, // how many times slower than the player they climb
   health: 100,
+  legHealth: 60, // leg damage that takes a zombie off its feet; then it crawls
+  crawlSpeed: 0.45,
   hitShove: 2.2,
   corpseTime: 30,
 

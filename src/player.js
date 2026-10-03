@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { Humanoid } from './humanoid.js';
 import { traversalTiming } from './traversal.js';
+import { Ragdoll } from './ragdoll.js';
 import { DEG, wrapAngle, dampAngle, damp, localPoint, localDir, quatFrom } from './rig-utils.js';
 
 const _v1 = new THREE.Vector3();
@@ -135,6 +136,7 @@ export class Player extends Humanoid {
     this.state = 'normal';
     this.grabbedBy = null;
     this.traversal = null;
+    this.ragdoll = null;
     this.traversalPose.pitch = this.traversalPose.roll = 0;
     this.vy = 0;
     this.aimPitch = 0;
@@ -198,6 +200,9 @@ export class Player extends Humanoid {
   update(dt, input) {
     const p = this.params;
     if (this.state === 'dead') {
+      // The pieces fall and roll where they were thrown.
+      this.ragdoll?.update(dt);
+      this.ragdoll?.apply();
       this._updateDrops(dt);
       return;
     }
@@ -270,10 +275,11 @@ export class Player extends Humanoid {
   // ---------------------------------------------------------------- death
 
   /**
-   * Torn apart. 'arms': one zombie rips off the arm nearest it and the body
-   * topples away. 'halves': two or more pull the torso off the legs, each
-   * half going toward the zombie that had it. `pulls` are ground directions
-   * from the player toward each grabber.
+   * Torn apart by whoever had hold. The body becomes a ragdoll cut at the
+   * neck, waist, shoulders and hips (elbows and knees too, sometimes), and
+   * every piece is flung off, mostly toward the zombie pulling that way, each
+   * one bleeding from where it tore. `pulls` are ground directions from the
+   * player toward each grabber. The gun goes flying on its own.
    */
   die(mode, pulls, gore) {
     this.state = 'dead';
@@ -284,51 +290,39 @@ export class Player extends Humanoid {
     if (this.magState !== 'gun') this.mag.visible = false;
 
     const up = new THREE.Vector3(0, 1, 0);
-    const deg = Math.PI / 180;
-    const armParts = (a) => [a.upper.mesh, a.fore.mesh, a.hand];
-    const upperParts = [this.chest, this.head, this.abdomen, this.neck.mesh, this.gun, this.mag, ...this.arms.map((a) => a.shoulderMesh)];
-    const lowerParts = [this.pelvis, ...this.legs.flatMap((l) => [l.thigh.mesh, l.shin.mesh, l.foot])];
+    const pull = pulls[0] ?? new THREE.Vector3(0, 0, 1);
+    gore.tear([this.gun, this.magState === 'gun' ? this.mag : null], this.gunPos.clone(), {
+      vel: pull.clone().multiplyScalar(-2).add(new THREE.Vector3(0, 2.5, 0)),
+      angVel: new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(18),
+      rest: 0.04,
+    });
 
-    if (mode === 'halves') {
-      const [pullA, pullB] = pulls;
-      const waist = localPoint(new THREE.Vector3(), this.pelvisPos, this.pelvisQuat, 0, 0.1, 0);
-      const top = gore.tear([...upperParts, ...this.arms.flatMap(armParts)], waist, {
-        vel: pullA.clone().multiplyScalar(3.2).add(new THREE.Vector3(0, 2.2, 0)),
-        angVel: new THREE.Vector3().crossVectors(up, pullA).multiplyScalar(7),
-        rest: 0.13,
-      });
-      const legs = gore.tear(lowerParts, this.pos, {
-        topple: { axis: new THREE.Vector3().crossVectors(up, pullB).normalize(), maxAngle: 85 * deg, duration: 0.8 },
-      });
-      gore.spray(waist, up, 50, 3);
-      gore.spray(waist, up.clone().negate(), 40, 2);
-      gore.wound(waist, new THREE.Vector3(0, -1, 0), { gib: top, rate: 140, duration: 4 });
-      gore.wound(waist, up, { gib: legs, rate: 110, duration: 4, speed: 1.6 });
-      gore.pool(this.pos, 1.1, 6);
-      gore.pool(this.pos.clone().addScaledVector(pullA, 1.4), 0.8, 6);
-    } else {
-      const pull = pulls[0];
-      // The arm on the side facing the zombie is the one it gets hold of.
-      const torn = this.arms.reduce((best, a) =>
-        _v1.subVectors(a.shoulder, this.chestPos).dot(pull) > new THREE.Vector3().subVectors(best.shoulder, this.chestPos).dot(pull) ? a : best,
-      );
-      const kept = this.arms.find((a) => a !== torn);
-      const shoulder = torn.shoulder.clone();
-      const outward = shoulder.clone().sub(this.chestPos).setY(0.2).normalize();
+    this.ragdoll = new Ragdoll(this, { vel: this.vel });
+    const rd = this.ragdoll;
+    const coin = () => Math.random() < 0.5;
+    const wounds = rd.dismember({ elbows: [coin(), coin()], knees: [coin(), coin()] });
+    const strength = mode === 'halves' ? 3.2 : 2.6; // more of them, more violent
+    rd.scatter(this.chestPos.clone(), pulls.length ? pulls : [pull], strength);
 
-      const arm = gore.tear(armParts(torn), shoulder, {
-        vel: pull.clone().multiplyScalar(4).add(new THREE.Vector3(0, 2.5, 0)),
-        angVel: new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).multiplyScalar(24),
-        rest: 0.06,
+    // Every torn end bleeds: a burst now, then spurts that ride along with the piece.
+    for (const w of wounds) {
+      const end = rd.particle(w.index);
+      const from = rd.particle(w.from);
+      const dir = end.clone().sub(from).normalize();
+      gore.spray(end.clone(), dir.clone().add(up), 14, 3);
+      gore.wound(end.clone(), dir, {
+        rate: 55,
+        duration: 2.5 + Math.random() * 2,
+        speed: 1.6,
+        follow: (outPoint, outDir) => {
+          outPoint.copy(rd.particle(w.index));
+          outDir.subVectors(outPoint, rd.particle(w.from)).normalize();
+        },
       });
-      const body = gore.tear([...upperParts, ...armParts(kept), ...lowerParts], this.pos, {
-        topple: { axis: new THREE.Vector3().crossVectors(up, pull).negate().normalize(), maxAngle: 86 * deg, duration: 0.85 },
-      });
-      gore.spray(shoulder, outward, 60, 3);
-      gore.wound(shoulder, outward, { gib: body, rate: 120, duration: 5 });
-      gore.wound(shoulder, outward.clone().negate(), { gib: arm, rate: 50, duration: 2.5, speed: 1.4 });
-      gore.pool(this.pos.clone().addScaledVector(pull, -0.9), 1.0, 6);
     }
+    gore.spray(this.chestPos.clone(), up, 70, 4);
+    gore.pool(this.pos, 1.3, 6);
+    for (const p of pulls) gore.pool(this.pos.clone().addScaledVector(p, 1.2), 0.7, 6);
   }
 
   // ---------------------------------------------------------------- weapon

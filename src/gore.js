@@ -128,9 +128,10 @@ export class Gore {
   }
 
   // A wound that keeps spurting. `point` is in world space at creation time;
-  // if `gib` is given, the point (and direction) ride along with it.
-  wound(point, dir, { gib = null, rate = 90, duration = 3, speed = 2.2 } = {}) {
-    this.emitters.push({ point: point.clone(), dir: dir.clone(), gib, rate, duration, speed, t: 0, carry: 0 });
+  // if `gib` is given, the point (and direction) ride along with it, or
+  // `follow(outPoint, outDir)` can say where it is now (a ragdoll piece).
+  wound(point, dir, { gib = null, follow = null, rate = 90, duration = 3, speed = 2.2 } = {}) {
+    this.emitters.push({ point: point.clone(), dir: dir.clone(), gib, follow, rate, duration, speed, t: 0, carry: 0 });
   }
 
   // Moves `parts` (already in world space) into a new rigid piece.
@@ -157,8 +158,16 @@ export class Gore {
       if (e.carry < 1) continue;
       const n = Math.floor(e.carry);
       e.carry -= n;
-      const origin = e.gib ? e.gib.track(_v2, e.point) : _v2.copy(e.point);
-      const dir = e.gib ? _s.copy(e.dir).applyQuaternion(e.gib.quat) : _s.copy(e.dir);
+      let origin;
+      let dir;
+      if (e.follow) {
+        e.follow(_v2, _s);
+        origin = _v2;
+        dir = _s;
+      } else {
+        origin = e.gib ? e.gib.track(_v2, e.point) : _v2.copy(e.point);
+        dir = e.gib ? _s.copy(e.dir).applyQuaternion(e.gib.quat) : _s.copy(e.dir);
+      }
       this.spray(origin, dir, n, e.speed * (0.5 + fade * 0.5), 0.35);
     }
     this.emitters = this.emitters.filter((e) => e.t < e.duration);

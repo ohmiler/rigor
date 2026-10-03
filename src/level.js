@@ -358,9 +358,9 @@ export function findLedge(level, pos, dir0) {
 
 // Push a circle at `pos` (x, z) out of every box taller than a step from
 // `feetY`. Things below that height are floor, not walls.
-export function collideCircle(level, pos, radius, feetY = 0) {
+export function collideCircle(level, pos, radius, feetY = 0, stepUp = STEP_UP) {
   for (const c of level.colliders) {
-    if (c.top <= feetY + STEP_UP) continue;
+    if (c.top <= feetY + stepUp) continue;
     const dx = pos.x - c.x;
     const dz = pos.z - c.z;
     // World -> box space (three.js Y rotation).

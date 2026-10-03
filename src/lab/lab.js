@@ -62,6 +62,7 @@ Humanoid.terrain = {
   heightAt: (x, z, maxY) => heightAt(lab, x, z, maxY),
   findLedge: (pos, dir) => findLedge(lab, pos, dir),
   solidAt: (p) => solidAt(lab, p),
+  collide: (pos, radius, bottom, stepUp) => collideCircle(lab, pos, radius, bottom, stepUp),
 };
 
 const mat = (color, roughness = 0.85) => new THREE.MeshStandardMaterial({ color, roughness });
