@@ -139,6 +139,11 @@ loadCharacter('player').then((model) => {
   player.dress(model);
   setSkeleton(params.showSkeleton); // the model's own materials follow the skeleton view too
 });
+loadCharacter('zombie').then((model) => {
+  if (!model) return;
+  for (const z of zombies) z.dress(model, z.type);
+  setSkeleton(params.showSkeleton);
+});
 player.teleport(level.start);
 const effects = new Effects(scene, level.meshes);
 const gore = new Gore(scene);

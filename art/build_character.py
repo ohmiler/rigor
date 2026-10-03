@@ -1,5 +1,6 @@
-# Builds the player's body in Blender, one part per slot of a Humanoid
-# (humanoid.js), and exports them together to public/models/player.glb.
+# Builds the player's and the zombies' bodies in Blender, one part per slot
+# of a Humanoid (humanoid.js), and exports them to public/models/player.glb
+# and zombie.glb.
 # Run with `npm run models`.
 #
 # The game keeps animating the body itself (gait, IK, ragdoll); a part only
@@ -146,4 +147,154 @@ def build_player():
     export('player', parts)
 
 
+# ---------------------------------------------------------------- zombies
+# One file for all four kinds: the shared parts by their slot names, and a
+# kind's own take on a part as "<kind>_<slot>" (brute_chest), which that
+# kind wears instead (not "kind:slot": three.js drops the colon from names).
+# Each zombie's colours (skin, shirt, trousers, hair) are its own, rolled
+# in zombie.js; a bald one hides the Cap parts. Brutes are thickened in the
+# game by their bulk, so everything is built at 1.
+
+def build_zombies():
+    reset()
+    skin = material('Skin', '#9aa58a', 0.85)
+    shirt = material('Shirt', '#6b5a4a', 0.95)
+    pants = material('Pants', '#3b3a36', 0.95)
+    shoes = material('Shoes', '#22201d', 0.9)
+    hair = material('Cap', '#2d241c', 0.95)
+    blood = material('Blood', '#4a0b0b', 0.5)
+    dark = material('Dark', '#120a08', 0.9)
+    eye = material('Eye', '#cfcaa0', 0.35)
+    parts = []
+
+    def torso(name, mat):
+        return loft(name, [
+            (-0.175, 0.148, 0.09), (-0.17, 0.162, 0.098), (-0.06, 0.176, 0.104, 0, 0.003),
+            (0.07, 0.186, 0.108, 0, 0.004), (0.135, 0.184, 0.1), (0.165, 0.13, 0.08), (0.178, 0.06, 0.055),
+        ], mat, segments=16)
+
+    def stains(prefix, spots):
+        return [box(prefix, c, sz, blood) for c, sz in spots]
+
+    # ---- torso: a torn T-shirt, bloodied, a rip showing skin
+    shirt_ = torso('chest', shirt)
+    rip = box('rip', (0.07, -0.08, 0.103), (0.07, 0.06, 0.01), skin, rot=(0, 0, 0.3))
+    neckline = loft('neckline', [(0.15, 0.066, 0.058), (0.185, 0.062, 0.054)], skin)
+    parts.append(join('chest', [shirt_, rip, neckline, *stains('stain', [
+        ((-0.06, 0.03, 0.106), (0.08, 0.1, 0.008)), ((0.1, -0.12, 0.1), (0.05, 0.05, 0.008)), ((-0.04, 0.08, -0.106), (0.1, 0.07, 0.008)),
+    ])]))
+    # Brute: an open vest, bare chest showing down the front.
+    vest = torso('vest', shirt)
+    opening = box('opening', (0, -0.01, 0.106), (0.1, 0.33, 0.012), skin)
+    parts.append(join('brute_chest', [vest, opening, *stains('stain', [((0.03, -0.05, 0.113), (0.05, 0.07, 0.006))])]))
+
+    belly = loft('belly', [(-0.5, 0.13, 0.082), (-0.48, 0.14, 0.088), (0.48, 0.148, 0.092), (0.5, 0.14, 0.086)], shirt, segments=16)
+    hole = box('hole', (-0.05, 0.1, 0.09), (0.09, 0.25, 0.01), skin)
+    parts.append(join('abdomen', [belly, hole, box('stain', (0.06, -0.15, 0.092), (0.06, 0.2, 0.008), blood)]))
+    belly_b = loft('belly', [(-0.5, 0.13, 0.082), (-0.48, 0.14, 0.088), (0.48, 0.148, 0.092), (0.5, 0.14, 0.086)], shirt, segments=16)
+    parts.append(join('brute_abdomen', [belly_b, box('opening', (0, 0, 0.092), (0.1, 1.0, 0.012), skin)]))
+
+    hips = loft('hips', [(-0.095, 0.11, 0.08), (-0.08, 0.15, 0.1), (0.03, 0.155, 0.102), (0.09, 0.15, 0.098), (0.1, 0.12, 0.08)], pants, segments=16)
+    hem = loft('hem', [(0.04, 0.164, 0.106), (0.1, 0.168, 0.11)], shirt, segments=16)
+    parts.append(join('pelvis', [hips, hem]))
+    # Screamer: a hospital gown, a short skirt over the hips.
+    gown = loft('gown', [(0.1, 0.15, 0.098), (0.0, 0.165, 0.11), (-0.12, 0.18, 0.13), (-0.17, 0.185, 0.135), (-0.175, 0.15, 0.1)], shirt, segments=16)
+    bare_hips = loft('hips', [(-0.095, 0.11, 0.08), (-0.08, 0.15, 0.1), (0.1, 0.12, 0.08)], skin, segments=16)
+    parts.append(join('screamer_pelvis', [bare_hips, gown]))
+
+    # ---- head: sunken milky eyes, a slack jaw, thin hair, blood at the mouth
+    def skull(name):
+        return loft(name, [
+            (-0.12, 0.028, 0.028, 0, 0.032), (-0.105, 0.05, 0.048, 0, 0.028), (-0.08, 0.066, 0.07, 0, 0.016),
+            (-0.035, 0.074, 0.088, 0, 0.004), (0.02, 0.088, 0.1), (0.065, 0.086, 0.097, 0, -0.004),
+            (0.1, 0.066, 0.078, 0, -0.008), (0.122, 0.022, 0.025, 0, -0.01),
+        ], skin, segments=16)
+
+    def face(prefix, mouth_size, eye_w):
+        bits = [box('nose', (0, -0.012, 0.098), (0.022, 0.038, 0.026), skin)]
+        bits += [box('socket', (x, 0.022, 0.091), (eye_w + 0.01, 0.022, 0.008), dark) for x in (-0.033, 0.033)]
+        bits += [box('eye', (x, 0.022, 0.094), (eye_w * 0.6, 0.009, 0.006), eye) for x in (-0.033, 0.033)]
+        bits += [box('mouth', (0, -0.072, 0.084), mouth_size, dark)]
+        bits += [box('drool', (0.012, -0.1, 0.07), (0.014, 0.04, 0.01), blood)]
+        bits += [box('ear', (x, 0.0, -0.004), (0.02, 0.04, 0.028), skin) for x in (-0.086, 0.086)]
+        return bits
+
+    tufts = [box('hair', c, sz, hair, rot=r) for c, sz, r in [
+        ((0.0, 0.105, -0.02), (0.1, 0.03, 0.12), (0.3, 0, 0)),
+        ((-0.07, 0.07, -0.03), (0.03, 0.06, 0.1), (0, 0, 0.2)),
+        ((0.07, 0.07, -0.03), (0.03, 0.06, 0.1), (0, 0, -0.2)),
+        ((0.02, 0.1, 0.05), (0.05, 0.02, 0.05), (0.4, 0.3, 0)),
+        ((0.0, 0.03, -0.095), (0.12, 0.08, 0.02), (0, 0, 0)),
+    ]]
+    parts.append(join('head', [skull('head'), *face('', (0.05, 0.03, 0.02), 0.022), *tufts]))
+    # Screamer: bald, eyes wide, the mouth torn wide open in the shriek.
+    parts.append(join('screamer_head', [skull('head'), *face('', (0.06, 0.06, 0.025), 0.026)]))
+
+    parts.append(loft('neck', [(-0.075, 0.028, 0.028), (-0.06, 0.042, 0.042), (0.06, 0.04, 0.04), (0.075, 0.028, 0.028)], skin, segments=10))
+    parts.append(loft('shoulder', [(-0.064, 0.015, 0.015), (-0.044, 0.05, 0.05), (0, 0.064, 0.062), (0.044, 0.05, 0.05), (0.064, 0.015, 0.015)], shirt, segments=12))
+    parts.append(loft('runner_shoulder', [(-0.064, 0.015, 0.015), (-0.044, 0.05, 0.05), (0, 0.064, 0.062), (0.044, 0.05, 0.05), (0.064, 0.015, 0.015)], skin, segments=12))
+    parts.append(loft('brute_shoulder', [(-0.064, 0.015, 0.015), (-0.044, 0.05, 0.05), (0, 0.064, 0.062), (0.044, 0.05, 0.05), (0.064, 0.015, 0.015)], skin, segments=12))
+
+    # ---- arms: a short sleeve then bare, grey skin; bare all the way on
+    # the runner (a vest top) and the brute
+    h = UPPER_ARM / 2
+    arm_rings = [
+        (-h - 0.03, 0.02, 0.02), (-h - 0.01, 0.05, 0.05), (-h + 0.06, 0.052, 0.05, 0, 0.004),
+        (0.02, 0.048, 0.046, 0, 0.004), (h - 0.02, 0.043, 0.041), (h + 0.02, 0.028, 0.028),
+    ]
+    sleeve = loft('sleeve', [(-h - 0.03, 0.025, 0.025), (-h - 0.01, 0.056, 0.056), (-0.04, 0.056, 0.054), (-0.02, 0.05, 0.048)], shirt)
+    parts.append(join('upperArm', [loft('upperArm', arm_rings, skin), sleeve]))
+    parts.append(loft('runner_upperArm', arm_rings, skin))
+    parts.append(loft('brute_upperArm', arm_rings, skin))
+    h = FOREARM / 2
+    fore = loft('forearm', [(-h - 0.03, 0.02, 0.02), (-h - 0.01, 0.044, 0.044), (-0.02, 0.042, 0.04), (0.06, 0.036, 0.033), (h - 0.01, 0.029, 0.026), (h + 0.015, 0.017, 0.015)], skin)
+    gash = box('gash', (0.02, 0.0, 0.035), (0.025, 0.11, 0.012), blood)
+    parts.append(join('forearm', [fore, gash]))
+
+    # Hands: bare, the fingers long and hooked into claws.
+    palm = box('palm', (0, 0, 0.035), (0.075, 0.03, 0.07), skin)
+    fingers = box('fingers', (-0.002, -0.022, 0.095), (0.07, 0.022, 0.07), skin, rot=(0.6, 0, 0))
+    thumb = box('thumb', (0.042, -0.01, 0.03), (0.022, 0.022, 0.05), skin, rot=(0.2, 0.5, 0))
+    for bx in (palm, fingers, thumb):
+        bevel(bx, 0.006, 2, 30)
+    parts.append(join('hand', [palm, fingers, thumb], smooth=False))
+
+    # ---- legs: trousers ragged at the shin, worn shoes; the screamer
+    # barefoot and bare-legged under the gown
+    h = THIGH / 2
+    thigh_rings = [
+        (-h - 0.03, 0.05, 0.05), (-h, 0.086, 0.08), (-0.1, 0.08, 0.076, 0, 0.004),
+        (0.08, 0.066, 0.064, 0, 0.003), (h - 0.02, 0.058, 0.06, 0, 0.006), (h + 0.025, 0.035, 0.035, 0, 0.006),
+    ]
+    parts.append(join('thigh', [loft('thigh', thigh_rings, pants), box('tear', (0.03, h - 0.03, 0.058), (0.05, 0.05, 0.01), skin)]))
+    parts.append(join('screamer_thigh', [loft('thigh', thigh_rings, skin)]))
+    h = SHIN / 2
+    shin_rings = [
+        (-h - 0.025, 0.035, 0.035), (-h + 0.005, 0.058, 0.058, 0, 0.004), (-0.11, 0.056, 0.063, 0, -0.008),
+        (0.03, 0.049, 0.05), (0.15, 0.044, 0.045), (h + 0.01, 0.036, 0.038), (h + 0.03, 0.025, 0.025),
+    ]
+    trousers = loft('trousers', [(-h - 0.025, 0.037, 0.037), (-h + 0.005, 0.061, 0.061, 0, 0.004), (-0.11, 0.059, 0.066, 0, -0.008), (0.03, 0.053, 0.054), (0.13, 0.056, 0.057), (0.135, 0.045, 0.045)], pants)
+    parts.append(join('shin', [loft('shin', shin_rings, skin), trousers]))
+    parts.append(loft('screamer_shin', shin_rings, skin))
+
+    def foot_parts(mat, sole_mat):
+        f = loft('foot', [
+            (-0.098, 0.025, 0.02, 0, -0.006), (-0.088, 0.044, 0.038, 0, -0.002), (-0.05, 0.05, 0.042, 0, 0.002),
+            (0.03, 0.051, 0.036, 0, -0.001), (0.085, 0.05, 0.03, 0, -0.004),
+        ], mat, axis='z')
+        t = loft('toe', [(-0.005, 0.05, 0.028, 0, -0.004), (0.045, 0.049, 0.025, 0, -0.006), (0.08, 0.04, 0.02, 0, -0.01), (0.098, 0.02, 0.012, 0, -0.012)], mat, axis='z')
+        fs = box('sole', (0, -0.028, -0.005), (0.1, 0.014, 0.18), sole_mat)
+        ts = box('sole', (0, -0.02, 0.045), (0.096, 0.012, 0.095), sole_mat)
+        return f, t, fs, ts
+    f, t, fs, ts = foot_parts(shoes, dark)
+    parts.append(join('foot', [f, fs]))
+    parts.append(join('toe', [t, ts]))
+    f, t, fs, ts = foot_parts(skin, skin)
+    parts.append(join('screamer_foot', [f, fs]))
+    parts.append(join('screamer_toe', [t, ts]))
+
+    export('zombie', parts)
+
+
 build_player()
+build_zombies()

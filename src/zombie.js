@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { Humanoid } from './humanoid.js';
+import { characterModel } from './characters.js';
 import { traversalTiming } from './traversal.js';
 import { DEG, dampAngle, damp, localPoint } from './rig-utils.js';
 import { Ragdoll, RAGDOLL } from './ragdoll.js';
@@ -106,6 +107,9 @@ export class Zombie extends Humanoid {
     });
     this.type = type;
     this.hitRadius = HIT_RADIUS * kind.bulk;
+    // The modelled body, once it has loaded (main.js dresses any already up).
+    const model = characterModel('zombie');
+    if (model) this.dress(model, type);
 
     // Per-zombie variation so a crowd never moves in sync.
     this.quirk = {

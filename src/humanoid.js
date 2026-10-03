@@ -297,21 +297,24 @@ export class Humanoid {
     // Where a modelled body goes (dress): each slot, the part that fills it,
     // and the primitives it replaces.
     const kids = (g) => g.children.filter((c) => /** @type {any} */ (c).isMesh);
+    // `thick` widens a part by the body's bulk, as the primitives are.
+    const across = { x: k, y: 1, z: k };
+    /** @type {Array<{ at: THREE.Object3D, part: string, standIns: THREE.Object3D[], thick?: { x: number, y: number, z: number }, mirror?: boolean }>} */
     this.slots = [
-      { at: this.pelvis, part: 'pelvis', standIns: kids(this.pelvis) },
-      { at: this.chest, part: 'chest', standIns: kids(this.chest) },
-      { at: this.abdomen, part: 'abdomen', standIns: kids(this.abdomen) },
-      { at: this.neck.mesh, part: 'neck', standIns: [this.neck.capsule] },
+      { at: this.pelvis, part: 'pelvis', standIns: kids(this.pelvis), thick: across },
+      { at: this.chest, part: 'chest', standIns: kids(this.chest), thick: across },
+      { at: this.abdomen, part: 'abdomen', standIns: kids(this.abdomen), thick: across },
+      { at: this.neck.mesh, part: 'neck', standIns: [this.neck.capsule], thick: across },
       { at: this.head, part: 'head', standIns: kids(this.head) },
       ...this.arms.flatMap((a) => [
-        { at: a.shoulderMesh, part: 'shoulder', standIns: kids(a.shoulderMesh) },
-        { at: a.upper.mesh, part: 'upperArm', standIns: [a.upper.capsule] },
-        { at: a.fore.mesh, part: 'forearm', standIns: [a.fore.capsule] },
+        { at: a.shoulderMesh, part: 'shoulder', standIns: kids(a.shoulderMesh), thick: { x: k, y: k, z: k } },
+        { at: a.upper.mesh, part: 'upperArm', standIns: [a.upper.capsule], thick: across },
+        { at: a.fore.mesh, part: 'forearm', standIns: [a.fore.capsule], thick: across },
         { at: a.hand, part: 'hand', standIns: kids(a.hand), mirror: a.side < 0 },
       ]),
       ...this.legs.flatMap((l) => [
-        { at: l.thigh.mesh, part: 'thigh', standIns: [l.thigh.capsule] },
-        { at: l.shin.mesh, part: 'shin', standIns: [l.shin.capsule] },
+        { at: l.thigh.mesh, part: 'thigh', standIns: [l.thigh.capsule], thick: across },
+        { at: l.shin.mesh, part: 'shin', standIns: [l.shin.capsule], thick: across },
         { at: l.foot, part: 'foot', standIns: kids(l.foot) },
         { at: l.toe, part: 'toe', standIns: kids(l.toe) },
       ]),
@@ -347,31 +350,39 @@ export class Humanoid {
   /**
    * Swap the primitives for a modelled body (characters.js): every part
    * found in `model` by name goes in its slot, modelled in that slot's own
-   * frame; a part the model lacks keeps its primitive. Materials named like
-   * this body's own (Skin, Shirt, Pants, Shoes, Cap) become those, so the
-   * look's colours, blood and the skeleton view all still apply; any others
-   * are this body's own copies.
+   * frame; a part the model lacks keeps its primitive. With a `kind`, a
+   * part named "<kind>_<slot>" is worn in place of the shared one.
+   * Materials named like this body's own (Skin, Shirt, Pants, Shoes, Cap)
+   * become those, so the look's colours, blood and the skeleton view all
+   * still apply; a look without one (a bald zombie: no Cap) hides what
+   * wears it. Any other material is this body's own copy.
    * @param {THREE.Object3D} model
+   * @param {string} [kind]
    */
-  dress(model) {
+  dress(model, kind) {
     if (this.dressed) return;
     this.dressed = true;
+    const own = ['skin', 'shirt', 'pants', 'shoes', 'cap'];
     const materialFor = (src) => {
       const key = src.name.toLowerCase();
+      if (own.includes(key)) return this.materials[key] ?? null;
       this.materials[key] ??= src.clone();
       return this.materials[key];
     };
     for (const slot of this.slots) {
-      const part = model.getObjectByName(slot.part);
+      const part = (kind && model.getObjectByName(`${kind}_${slot.part}`)) || model.getObjectByName(slot.part);
       if (!part) continue;
       const copy = part.clone(true);
       copy.position.set(0, 0, 0);
       copy.quaternion.identity();
-      if (slot.mirror) copy.scale.x = -1; // a left hand from the right one
+      if (slot.thick) copy.scale.set(slot.thick.x, slot.thick.y, slot.thick.z);
+      if (slot.mirror) copy.scale.x *= -1; // a left hand from the right one
       copy.traverse((o) => {
         if (!(/** @type {any} */ (o).isMesh)) return;
         const mesh = /** @type {THREE.Mesh} */ (o);
-        mesh.material = materialFor(mesh.material);
+        const material = materialFor(mesh.material);
+        if (material) mesh.material = material;
+        else mesh.visible = false;
         mesh.castShadow = true;
       });
       slot.at.add(copy);
