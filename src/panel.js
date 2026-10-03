@@ -63,7 +63,7 @@ export function createPanel(params, zparams, player, { onSkeleton, onSpawn, onFu
   const move = gui.addFolder('Movement').close();
   move.add(params, 'runSpeed', 1, 8, 0.1).name('Sprint speed (Shift)');
   move.add(params, 'jogSpeed', 0.5, 6, 0.1).name('Normal speed');
-  move.add(params, 'walkSpeed', 0.3, 4, 0.1).name('Walk speed (Ctrl)');
+  move.add(params, 'walkSpeed', 0.3, 4, 0.1).name('Walk speed (C)');
   move.add(params, 'acceleration', 2, 40, 0.5).name('Acceleration');
   move.add(params, 'aimTurnRate', 2, 40, 0.5).name('Aim turn rate');
   move.add(params, 'faceMouse').name('Face mouse').listen();

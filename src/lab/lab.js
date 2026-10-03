@@ -716,7 +716,7 @@ function freeInput() {
   const input = {
     x: move.x,
     z: move.z,
-    walk: keys.has('ControlLeft'),
+    walk: keys.has('KeyC'),
     sprint: keys.has('ShiftLeft'),
     fire: performance.now() < fireUntil,
     jump: jumpQueued,
