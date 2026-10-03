@@ -101,6 +101,12 @@ export const DEFAULTS = {
   fogRange: 20, // metres past the player before the fog swallows everything
   exposure: 1.0,
 
+  // The look (post-processing): glow, darkened edges, film grain, hurt
+  postFX: true,
+  bloom: 0.6, // how much lamps, flashes and the flare glow
+  vignette: 0.35,
+  grain: 0.06,
+
   // Flashlight (mounted under the barrel)
   flashlightOn: true,
   flashIntensity: 70,

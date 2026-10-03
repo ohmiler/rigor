@@ -18,7 +18,7 @@ export class Effects {
     this.flash = new THREE.Mesh(
       new THREE.ConeGeometry(0.06, 0.22, 7).rotateX(Math.PI / 2).translate(0, 0, 0.11),
       new THREE.MeshBasicMaterial({
-        color: '#ffd27a',
+        color: new THREE.Color('#ffd27a').multiplyScalar(3), // bright enough to glow
         transparent: true,
         blending: THREE.AdditiveBlending,
         depthWrite: false,

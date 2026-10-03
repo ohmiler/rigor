@@ -31,6 +31,12 @@ export function createPanel(params, zparams, player, { onSkeleton, onSpawn, onFu
   night.add(params, 'flashRange', 5, 50, 1).name('Beam range');
   night.add(params, 'beamOpacity', 0, 0.4, 0.01).name('Beam in fog');
 
+  const look = gui.addFolder('Look').close();
+  look.add(params, 'postFX').name('Post effects');
+  look.add(params, 'bloom', 0, 2, 0.05).name('Glow');
+  look.add(params, 'vignette', 0, 1, 0.05).name('Dark edges');
+  look.add(params, 'grain', 0, 0.2, 0.005).name('Film grain');
+
   const zombies = gui.addFolder('Zombies').close();
   zombies.add(zparams, 'count', 1, 40, 1).name('Count per spawn');
   zombies.add(zparams, 'wanderSpeed', 0.1, 2, 0.05).name('Wander speed');

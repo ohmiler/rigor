@@ -24,16 +24,19 @@ test('the game loads, starts from the start screen, and the player can walk', as
   await expect(page.locator('#start')).toBeHidden();
   await page.waitForTimeout(500);
   const before = await metresToGo(page);
+  // Hold W until the distance drops: software WebGL runs at a few frames a
+  // second, so how long that takes varies.
   await page.keyboard.down('w');
-  await page.waitForTimeout(2000);
+  await expect.poll(() => metresToGo(page), { timeout: 15000 }).toBeLessThan(before);
   await page.keyboard.up('w');
-  const after = await metresToGo(page);
-  expect(after).toBeLessThan(before);
 
   // Fire, reload and swap guns: nothing should throw.
   await page.mouse.move(640, 250);
+  // Fire until a round is gone (a full magazine won't reload).
+  const mag = async () => Number(await page.locator('#ammo .mag').textContent());
+  const full = await mag();
   await page.mouse.down();
-  await page.waitForTimeout(600);
+  await expect.poll(mag, { timeout: 15000 }).toBeLessThan(full);
   await page.mouse.up();
   await page.keyboard.press('r');
   // No swapping mid-reload (by design): see it start, then wait for it to finish.

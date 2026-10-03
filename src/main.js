@@ -11,6 +11,7 @@ import { Throwables } from './throwables.js';
 import { MELEE } from './weapons.js';
 import { buildStreet, collideCircle, insideCollider, heightAt, findLedge, solidAt, STREET_LENGTH, STREET_EDGE } from './level.js';
 import { NavGrid } from './nav.js';
+import { Post } from './post.js';
 import { Humanoid } from './humanoid.js';
 import { loadParams, ZOMBIE_DEFAULTS, ZOMBIE_KEY, VISIBILITY } from './params.js';
 import { DEG } from './rig-utils.js';
@@ -38,6 +39,7 @@ const fog = new THREE.Fog('#4b566c', 25, 60);
 scene.fog = fog;
 
 const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 200);
+const post = new Post(renderer, scene, camera);
 
 const sky = new THREE.HemisphereLight('#c9d6ff', '#3a4150', 1.3);
 scene.add(sky);
@@ -87,6 +89,7 @@ function applyEnvironment() {
   for (const { light, bulb } of level.lamps) {
     light.intensity = night ? 9 : 0;
     bulb.material.color.set(night ? '#ffd59a' : '#55534e');
+    if (night) bulb.material.color.multiplyScalar(4); // bright enough to glow
   }
   level.goalParts.flare.intensity = night ? 6 : 0;
   renderer.toneMappingExposure = params.exposure;
@@ -710,6 +713,7 @@ window.addEventListener('resize', () => {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
+  post.resize();
 });
 
 const stats = document.getElementById('stats');
@@ -738,7 +742,16 @@ function updateUI(real) {
   ui.health.style.width = `${Math.max(player.health / params.maxHealth, 0) * 100}%`;
   hurtFlash = Math.max(hurtFlash - real * 1.5, 0);
   const lowHealth = player.state !== 'dead' && player.health < params.maxHealth * 0.35 ? 0.35 : 0;
-  ui.hurt.style.opacity = String(Math.max(hurtFlash, lowHealth));
+  // With post effects on, the frame itself shows the hurt (post.js).
+  ui.hurt.style.opacity = params.postFX ? '0' : String(Math.max(hurtFlash, lowHealth));
+  post.update(real, {
+    hurt: hurtFlash,
+    health: Math.max(player.health / params.maxHealth, 0),
+    dead: player.state === 'dead',
+    bloom: params.bloom * (params.night ? 1 : 0.3), // daylight surfaces are bright already
+    vignette: params.vignette,
+    grain: params.grain,
+  });
   ui.struggle.hidden = !grapple.active;
   if (grapple.active) {
     ui.struggleFill.style.width = `${grapple.struggle * 100}%`;
@@ -842,10 +855,31 @@ function updateSounds(dt, real) {
   }
 }
 
+// A machine that can't keep up drops the post effects (once) rather than
+// the frame rate; turning them back on in the panel sticks.
+const rate = { time: 0, frames: 0, slow: 0 };
+let postDropped = false;
+function watchFrameRate(elapsed) {
+  if (postDropped || !params.postFX) return;
+  // Frames per second over each second; two slow seconds in a row and it's off.
+  rate.time += elapsed;
+  rate.frames++;
+  if (rate.time < 1) return;
+  rate.slow = rate.frames / rate.time < 25 ? rate.slow + 1 : 0;
+  rate.time = rate.frames = 0;
+  if (rate.slow >= 2) {
+    params.postFX = false;
+    postDropped = true;
+    console.info('RIGOR: frames are slow, post effects off');
+  }
+}
+
 function frame(timestamp) {
   requestAnimationFrame(frame);
   timer.update(timestamp);
-  const real = Math.min(timer.getDelta(), 0.1);
+  const elapsed = timer.getDelta();
+  const real = Math.min(elapsed, 0.1);
+  watchFrameRate(Math.min(elapsed, 1)); // (a hidden tab's gap isn't a slow frame)
   deathSlow = Math.max(deathSlow - real, 0);
   const slow = (params.slowMo ? 0.25 : 1) * (deathSlow > 0 ? 0.3 : 1);
   const dt = params.paused || !started ? 0 : real * params.timeScale * slow;
@@ -882,7 +916,8 @@ function frame(timestamp) {
       `${player.getDebug()}\n` + `zombies ${alive.length} alive · ${chasing} chasing · kills ${kills}`;
   }
 
-  renderer.render(scene, camera);
+  if (params.postFX) post.render();
+  else renderer.render(scene, camera);
 }
 requestAnimationFrame(frame);
 
@@ -898,5 +933,5 @@ if (import.meta.env.DEV) {
       kickBodies();
     }
   };
-  /** @type {any} */ (window).__rigor = { player, grapple, gore, params, zparams, level, nav, pickups, sound, restart, startGame, advance, addZombie, get zombies() { return zombies; } };
+  /** @type {any} */ (window).__rigor = { player, grapple, gore, params, zparams, level, nav, post, hurt: () => (hurtFlash = 1), pickups, sound, restart, startGame, advance, addZombie, get zombies() { return zombies; } };
 }
