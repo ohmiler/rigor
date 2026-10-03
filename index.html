@@ -9,10 +9,37 @@
     <div id="title">RIGOR <span>· prototype · one night, one street</span></div>
     <div id="topbar">
       <button id="fullscreen" type="button">Fullscreen</button>
-      <a id="lab-link" href="/lab.html">Lab</a>
+      <a id="lab-link" class="dev-only" href="lab.html">Lab</a>
       <div id="visibility" title="Visibility (V)"></div>
     </div>
     <div id="toast" hidden></div>
+    <div id="start">
+      <div class="card">
+        <div class="logo">RIGOR</div>
+        <p class="tagline">One night. One street. Get to the extraction point alive.</p>
+        <ul class="controls">
+          <li><b>WASD</b> move</li>
+          <li><b>Mouse</b> aim</li>
+          <li><b>Left click</b> fire</li>
+          <li><b>R</b> reload</li>
+          <li><b>Shift</b> sprint</li>
+          <li><b>Ctrl</b> walk quietly</li>
+          <li><b>Space</b> vault or climb</li>
+          <li><b>Space</b> mash to break free</li>
+          <li><b>F</b> flashlight</li>
+          <li><b>V</b> visibility</li>
+          <li><b>P</b> pause</li>
+          <li><b>Wheel</b> zoom</li>
+        </ul>
+        <p class="tip">Gunfire carries. Every zombie that hears it comes looking.<br />Climb onto a car to get out of reach. They will follow, slowly.</p>
+        <div class="buttons">
+          <button id="play-fullscreen" type="button" class="primary">Play fullscreen</button>
+          <button id="play-window" type="button">Play in a window</button>
+        </div>
+        <p class="note">Fullscreen keeps Ctrl+W from closing the tab while you walk. Or press <b>Enter</b>.</p>
+        <p class="note touch" hidden>RIGOR needs a keyboard and a mouse.</p>
+      </div>
+    </div>
     <div id="health"><div id="health-fill"></div></div>
     <div id="objective"></div>
     <div id="parkour" hidden></div>
@@ -33,10 +60,11 @@
       <div class="sub">Press <b>Enter</b> to try again</div>
     </div>
     <div id="hud">
-      <pre id="stats"></pre>
+      <pre id="stats" class="dev-only"></pre>
       <div class="keys">
-        <b>WASD</b> move · <b>Mouse</b> aim · <b>LMB</b> fire · <b>Shift</b> sprint · <b>Ctrl</b> walk · <b>R</b> reload · <b>Space</b> vault / climb / struggle · <b>N</b> spawn zombies · <b>T</b> slow-mo ·
-        <b>P</b> pause · <b>B</b> skeleton · <b>F</b> flashlight · <b>V</b> visibility · <b>Wheel</b> zoom
+        <b>WASD</b> move · <b>Mouse</b> aim · <b>LMB</b> fire · <b>Shift</b> sprint · <b>Ctrl</b> walk · <b>R</b> reload · <b>Space</b> vault / climb / struggle ·
+        <span class="dev-only"><b>N</b> spawn zombies · <b>T</b> slow-mo · <b>B</b> skeleton · </span>
+        <b>P</b> pause · <b>F</b> flashlight · <b>V</b> visibility · <b>Wheel</b> zoom
       </div>
     </div>
     <script type="module" src="/src/main.js"></script>

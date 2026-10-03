@@ -13,6 +13,11 @@ import './style.css';
 const params = loadParams();
 const zparams = loadParams(ZOMBIE_DEFAULTS, ZOMBIE_KEY);
 
+// The levers panel, debug readout, lab link and test keys are for working on
+// the game. They're on with the dev server, or add ?dev to the address.
+const DEV = import.meta.env.DEV || new URLSearchParams(location.search).has('dev');
+document.body.classList.toggle('dev', DEV);
+
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
@@ -187,13 +192,15 @@ function setSkeleton(on) {
 }
 setSkeleton(params.showSkeleton);
 
-createPanel(params, zparams, player, {
-  onSkeleton: setSkeleton,
-  onSpawn: spawnWave,
-  onFullscreen: () => enterFullscreen(),
-  onEnvironment: applyEnvironment,
-  onVisibility: setVisibility,
-});
+if (DEV) {
+  createPanel(params, zparams, player, {
+    onSkeleton: setSkeleton,
+    onSpawn: spawnWave,
+    onFullscreen: () => enterFullscreen(),
+    onEnvironment: applyEnvironment,
+    onVisibility: setVisibility,
+  });
+}
 
 // A shot hits whichever is nearest along the ray: a crate or a zombie.
 let shake = 0;
@@ -320,6 +327,24 @@ function showToast(text) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => (toast.hidden = true), 4000);
 }
+// The start screen: nothing moves until you choose how to play.
+let started = false;
+const startScreen = document.getElementById('start');
+function startGame(fullscreen) {
+  if (started) return;
+  started = true;
+  startScreen.hidden = true;
+  jumpQueued = false;
+  document.activeElement?.blur?.(); // or Space would "click" the hidden button
+  if (fullscreen) enterFullscreen();
+}
+document.getElementById('play-fullscreen').addEventListener('click', () => startGame(true));
+document.getElementById('play-window').addEventListener('click', () => startGame(false));
+// Phones and tablets: say so up front rather than leaving them stuck.
+if (matchMedia('(pointer: coarse)').matches && !matchMedia('(pointer: fine)').matches) {
+  startScreen.querySelector('.touch').hidden = false;
+}
+
 let warnedAboutCtrl = false;
 let strugglePresses = 0; // Space presses since last frame
 let jumpQueued = false;
@@ -334,16 +359,22 @@ window.addEventListener('keydown', (e) => {
     showToast('Ctrl+W can close the tab outside fullscreen. Click "Fullscreen" (top left) to lock keys.');
   }
   if (e.repeat) return;
+  if (!started) {
+    if (e.code === 'Enter') startGame(false);
+    return;
+  }
   if (e.code === 'Space' || e.code === 'KeyE') strugglePresses++;
   if (e.code === 'Space') jumpQueued = true; // vault/climb when not grabbed
   if (e.code === 'Enter' && (player.state === 'dead' || escaped)) restart();
   if (e.code === 'KeyR') player.startReload();
-  if (e.code === 'KeyN') spawnWave();
-  if (e.code === 'KeyT') params.slowMo = !params.slowMo;
   if (e.code === 'KeyP') params.paused = !params.paused;
   if (e.code === 'KeyF') player.toggleFlashlight();
   if (e.code === 'KeyV') cycleVisibility();
-  if (e.code === 'KeyB') setSkeleton(!params.showSkeleton);
+  if (DEV) {
+    if (e.code === 'KeyN') spawnWave();
+    if (e.code === 'KeyT') params.slowMo = !params.slowMo;
+    if (e.code === 'KeyB') setSkeleton(!params.showSkeleton);
+  }
 });
 window.addEventListener('keyup', (e) => keys.delete(e.code));
 window.addEventListener('blur', () => {
@@ -483,7 +514,7 @@ function frame(timestamp) {
   const real = Math.min(timer.getDelta(), 0.1);
   deathSlow = Math.max(deathSlow - real, 0);
   const slow = (params.slowMo ? 0.25 : 1) * (deathSlow > 0 ? 0.3 : 1);
-  const dt = params.paused ? 0 : real * params.timeScale * slow;
+  const dt = params.paused || !started ? 0 : real * params.timeScale * slow;
 
   // Dev test scripts can set window.__rigorInput to drive the game alone.
   const input = (import.meta.env.DEV && window.__rigorInput) ? { ...window.__rigorInput } : readInput();
@@ -504,7 +535,7 @@ function frame(timestamp) {
   updateUI(real);
 
   hudTimer -= real;
-  if (hudTimer <= 0) {
+  if (DEV && hudTimer <= 0) {
     hudTimer = 0.1;
     const alive = zombies.filter((z) => !z.dead);
     const chasing = alive.filter((z) => z.state === 'chase').length;
@@ -518,5 +549,5 @@ requestAnimationFrame(frame);
 
 // Dev-only handle for poking at the game from the browser console.
 if (import.meta.env.DEV) {
-  window.__rigor = { player, grapple, gore, params, zparams, level, restart, get zombies() { return zombies; } };
+  window.__rigor = { player, grapple, gore, params, zparams, level, restart, startGame, get zombies() { return zombies; } };
 }

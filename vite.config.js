@@ -3,6 +3,9 @@ import { fileURLToPath } from 'node:url';
 
 // Two pages: the game, and the lab for testing and tuning movement.
 export default defineConfig({
+  // Relative asset paths, so the build runs from any folder: a GitHub Pages
+  // project site (/rigor/), itch.io, or a plain file server.
+  base: './',
   build: {
     rollupOptions: {
       input: {
