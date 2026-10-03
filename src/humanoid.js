@@ -649,6 +649,7 @@ export class Humanoid {
           f.planted = true;
           f.pos.y = Humanoid.terrain.heightAt(f.pos.x, f.pos.z, Math.max(f.pos.y, f.target.y) + 0.05);
           f.landPitch = f.pitch;
+          this.onFootstep?.(f);
         }
         // A foot left twisted by a turn pivots on its ball to follow the legs;
         // past what an ankle can take it gets dragged round.
@@ -796,6 +797,7 @@ export class Humanoid {
     this.duty = Math.max(this.duty, 0.52);
     this.phase = (this.duty + 1 - this.feet[1].offset - 0.001) % 1;
     this.landDipVel -= Math.max(this.landedAt - 1.5, 0) * 0.9;
+    this.onLand?.(this.landedAt);
     this.landedAt = 0;
   }
 

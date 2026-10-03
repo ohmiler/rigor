@@ -435,6 +435,7 @@ export class Player extends Humanoid {
   }
 
   _reloadEvent(name) {
+    this.onReloadEvent?.(name);
     if (name === 'eject') {
       const drop = new THREE.Mesh(this.mag.geometry, this.materials.mag);
       drop.position.copy(this.mag.position);

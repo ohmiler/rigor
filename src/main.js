@@ -6,6 +6,7 @@ import { Effects } from './effects.js';
 import { Gore } from './gore.js';
 import { Grapple } from './grapple.js';
 import { Pickups } from './pickups.js';
+import { Sound } from './audio.js';
 import { buildStreet, collideCircle, insideCollider, heightAt, findLedge, solidAt, STREET_LENGTH } from './level.js';
 import { Humanoid } from './humanoid.js';
 import { loadParams, ZOMBIE_DEFAULTS, ZOMBIE_KEY, VISIBILITY } from './params.js';
@@ -108,6 +109,11 @@ player.teleport(level.start);
 const effects = new Effects(scene, level.meshes);
 const gore = new Gore(scene);
 const pickups = new Pickups(scene, level.pickupSpots);
+const sound = new Sound();
+sound.listener = player.pos;
+player.onFootstep = () => sound.footstep(player.pos, { speed: player.speed });
+player.onLand = (impact) => sound.land(player.pos, impact);
+player.onReloadEvent = (step) => sound.reload(step);
 
 // Walking over supplies. A medkit is left lying if you're already at full health.
 const pickupNote = document.getElementById('pickup-note');
@@ -124,6 +130,7 @@ function notePickup(text, kind) {
 }
 function takePickup(type) {
   if (type === 'ammo') {
+    sound.pickup('ammo');
     player.reserve += params.ammoPickup;
     notePickup(`+${params.ammoPickup} ROUNDS`, 'ammo');
     if (player.ammo === 0 && params.autoReload) player.startReload(); // ran dry before this
@@ -132,6 +139,7 @@ function takePickup(type) {
   if (player.health >= params.maxHealth) return false;
   const before = player.health;
   player.health = Math.min(player.health + params.medkitHeal, params.maxHealth);
+  sound.pickup('medkit');
   notePickup(`+${Math.round(player.health - before)} HEALTH`, 'medkit');
   return true;
 }
@@ -141,13 +149,17 @@ let hurtFlash = 0;
 let deathSlow = 0;
 const grapple = new Grapple(player, gore, params, {
   onBite: () => {
+    sound.bite();
     hurtFlash = 1;
     shake = params.cameraShake * 5;
   },
   onBreakFree: () => {
+    sound.breakFree();
     shake = params.cameraShake * 2;
   },
   onDeath: (mode) => {
+    sound.tear();
+    setTimeout(() => sound.died(), 900);
     hurtFlash = 1;
     shake = params.cameraShake * 6;
     deathSlow = 1.6;
@@ -181,6 +193,10 @@ let escaped = false;
 function addZombie(x, z) {
   const zombie = new Zombie(scene, zparams, new THREE.Vector3(x, 0, z));
   zombie.setSkeleton(params.showSkeleton);
+  // The limping leg drags along the road rather than stepping.
+  zombie.onFootstep = (f) => sound.footstep(f.pos, { zombie: true, drag: f.stepScale < 0.75 });
+  zombie.onLand = (impact) => sound.land(zombie.pos, impact);
+  zombie.voice = { state: zombie.state, dead: false, next: Math.random() * 6 };
   zombies.push(zombie);
 }
 
@@ -254,11 +270,14 @@ player.onShot = (muzzle, dir) => {
     }
   }
   effects.shot(muzzle, dir, distance, kind);
+  sound.gunshot(muzzle);
+  if (kind === 'wall') sound.wallHit(muzzle.clone().addScaledVector(dir, distance));
   if (target) {
     const hitPoint = muzzle.clone().addScaledVector(dir, distance);
     gore.spray(hitPoint, dir, headshot ? 24 : 10, headshot ? 3.5 : 2.5);
     const wasDead = target.dead;
     target.takeHit(dir, params.bulletDamage * (headshot ? params.headshotMultiplier : 1));
+    sound.fleshHit(hitPoint, headshot);
     if (!wasDead && target.dead) kills++;
   }
   // Gunfire is loud: everything within earshot comes looking.
@@ -285,6 +304,7 @@ function updateWorld(dt, input) {
     document.getElementById('won-sub').textContent =
       `Time ${m}:${s} · ${kills} killed · ${Math.round(player.health)} health · ${player.ammo + player.reserve} rounds left`;
     document.getElementById('won').hidden = false;
+    sound.escaped();
   }
 
   // Bodies can't overlap walls, cars or each other (mid-climb, the path rules).
@@ -352,6 +372,7 @@ let started = false;
 const startScreen = document.getElementById('start');
 function startGame(fullscreen) {
   if (started) return;
+  sound.start(); // browsers only allow audio after a click or key press
   started = true;
   startScreen.hidden = true;
   jumpQueued = false;
@@ -383,6 +404,7 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'KeyP') params.paused = !params.paused;
   if (e.code === 'KeyF') player.toggleFlashlight();
   if (e.code === 'KeyV') cycleVisibility();
+  if (e.code === 'KeyM') showToast(sound.toggleMute() ? 'Sound off (M)' : 'Sound on (M)');
   if (DEV) {
     if (e.code === 'KeyN') spawnWave();
     if (e.code === 'KeyT') params.slowMo = !params.slowMo;
@@ -543,6 +565,46 @@ function updateUI(real) {
   level.goalParts.beam.material.opacity = 0.12 + pulse * 0.1;
 }
 
+// Zombie voices and other sounds that follow from what's happening rather
+// than from a single event.
+let screamCooldown = 0;
+let wasDry = false;
+function updateSounds(dt, real) {
+  sound.update(real, player.health / params.maxHealth, player.state !== 'dead');
+  if (player.dryFire && !wasDry) sound.dryClick();
+  wasDry = player.dryFire;
+  if (dt <= 0) return;
+  screamCooldown = Math.max(screamCooldown - dt, 0);
+  for (const z of zombies) {
+    const v = z.voice;
+    if (z.dead) {
+      // The body hits the road as it finishes toppling.
+      if (!v.dead) setTimeout(() => sound.bodyFall(z.pos), 650);
+      v.dead = true;
+      continue;
+    }
+    if (z.state !== v.state) {
+      // Seeing you: a scream, but a whole street turning at once shouldn't
+      // be twenty screams on top of each other.
+      if (v.state === 'wander' && z.state === 'chase') {
+        if (screamCooldown <= 0) {
+          sound.scream(z.pos);
+          screamCooldown = 0.35;
+        } else sound.groan(z.pos, true);
+        v.next = 2 + Math.random() * 2;
+      }
+      if (z.state === 'lunge') sound.snarl(z.pos);
+      v.state = z.state;
+    }
+    v.next -= dt;
+    if (v.next <= 0) {
+      const angry = z.state === 'chase' || z.state === 'lunge' || z.state === 'grab';
+      sound.groan(z.pos, angry);
+      v.next = angry ? 1.6 + Math.random() * 2.2 : 4 + Math.random() * 6;
+    }
+  }
+}
+
 function frame(timestamp) {
   requestAnimationFrame(frame);
   timer.update(timestamp);
@@ -569,6 +631,7 @@ function frame(timestamp) {
 
   updateCamera(real);
   updateUI(real);
+  updateSounds(dt, real);
 
   hudTimer -= real;
   if (DEV && hudTimer <= 0) {
@@ -585,5 +648,5 @@ requestAnimationFrame(frame);
 
 // Dev-only handle for poking at the game from the browser console.
 if (import.meta.env.DEV) {
-  window.__rigor = { player, grapple, gore, params, zparams, level, pickups, restart, startGame, get zombies() { return zombies; } };
+  window.__rigor = { player, grapple, gore, params, zparams, level, pickups, sound, restart, startGame, get zombies() { return zombies; } };
 }
