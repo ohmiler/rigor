@@ -138,6 +138,7 @@ export class Player extends Humanoid {
     this.traversalPose.pitch = this.traversalPose.roll = 0;
     this.vy = 0;
     this.aimPitch = 0;
+    this.aimConverge = 0;
     this._settle();
   }
 
@@ -413,9 +414,17 @@ export class Player extends Humanoid {
       const dx = input.aimPoint.x - this.pos.x;
       const dz = input.aimPoint.z - this.pos.z;
       if (dx * dx + dz * dz > 0.16) aimTarget = Math.atan2(dx, dz);
-      // From high ground, tip the gun down toward chest height at the cursor.
-      const drop = this.pos.y > 0.3 ? this.pos.y + 0.25 : 0;
-      this.aimPitch = damp(this.aimPitch, Math.atan2(drop, Math.max(Math.hypot(dx, dz), 1)), 10, dt);
+      // Point the gun at the aim point itself, up or down: a head, the legs,
+      // a crawler on the road, or (from a car roof) chest height on the
+      // ground. And angle it in a touch, since it's held off to one side of
+      // the body, so the shot goes where the reticle is.
+      const gx = input.aimPoint.x - this.gunPos.x;
+      const gz = input.aimPoint.z - this.gunPos.z;
+      const flat = Math.max(Math.hypot(gx, gz), 0.8);
+      const pitch = THREE.MathUtils.clamp(Math.atan2(this.gunPos.y - input.aimPoint.y, flat), -0.5, 0.8);
+      this.aimPitch = damp(this.aimPitch, pitch, 14, dt);
+      const converge = THREE.MathUtils.clamp(wrapAngle(Math.atan2(gx, gz) - this.aimYaw), -0.25, 0.25);
+      this.aimConverge = damp(this.aimConverge ?? 0, flat > 0.9 ? converge : 0, 14, dt);
     } else if (!p.faceMouse && this.speed > 0.3) {
       aimTarget = Math.atan2(this.vel.x, this.vel.z);
     }
@@ -589,11 +598,15 @@ export class Player extends Humanoid {
     this.leanVel.x -= Math.sin(this.aimYaw) * kick;
     this.leanVel.y -= Math.cos(this.aimYaw) * kick;
 
-    // Anywhere in the current cone, evenly over its area.
+    // Anywhere in the current cone, evenly over its area. The cone is aimed
+    // where the gun is pointed except for most of the muzzle climb: from
+    // above you can't see a shot going high, so the climb is shown (the gun
+    // rears up) but spends itself in the spread you can see instead.
     const muzzle = localPoint(new THREE.Vector3(), this.gunPos, this.gunQuat, ...def.muzzle);
     const s = Math.tan(this.spreadNow * DEG) * Math.sqrt(Math.random());
     const a = Math.random() * Math.PI * 2;
-    const dir = localDir(new THREE.Vector3(), this.gunQuat, Math.cos(a) * s, Math.sin(a) * s, 1).normalize();
+    quatFrom(_q1, this.pitch * 0.15 - r.pitch * 0.15 + this.aimPitch, this.aimYaw + r.yaw + (this.aimConverge ?? 0), 0);
+    const dir = localDir(new THREE.Vector3(), _q1, Math.cos(a) * s, Math.sin(a) * s, 1).normalize();
     this.bloom = Math.min(this.bloom + this.stat('bloomPerShot'), this.stat('bloomMax'));
     this.sinceShot = 0;
     this.onShot?.(muzzle, dir, this.stat('bulletDamage'));
@@ -734,7 +747,7 @@ export class Player extends Humanoid {
     // Recoil: negative pitch raises the muzzle; "back" pulls the gun toward the chest.
     const r = this.recoil;
     const w = this.weapon;
-    quatFrom(this.gunQuat, this.pitch * 0.15 - r.pitch + this.aimPitch, this.aimYaw + r.yaw, 0);
+    quatFrom(this.gunQuat, this.pitch * 0.15 - r.pitch + this.aimPitch, this.aimYaw + r.yaw + (this.aimConverge ?? 0), 0);
     let fwd = this.stat('gunFwd') - r.back;
     let up = this.stat('gunUp') + r.pitch * 0.05;
     if (this.shoveT >= 0) {

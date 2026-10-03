@@ -608,13 +608,30 @@ const aimHit = new THREE.Vector3();
 const held = (...codes) => (codes.some((c) => keys.has(c)) ? 1 : 0);
 
 let lastAim = null;
+let lastAimZone = null; // 'head' | 'body' | 'legs' when the cursor is on a zombie
 function readInput() {
   let aimPoint = null;
+  let zone = null;
   if (hasMouse) {
     raycaster.setFromCamera(mouse, camera);
-    if (raycaster.ray.intersectPlane(aimPlane, aimHit)) aimPoint = aimHit;
+    const ray = raycaster.ray;
+    // Whatever body is under the cursor, exactly where: aim there (its head,
+    // its legs, a crawler on the road). Over nothing, aim level at chest height.
+    let best = null;
+    for (const z of zombies) {
+      if (z.dead) continue;
+      const hit = z.raycast(ray.origin, ray.direction);
+      if (hit && (!best || hit.distance < best.distance)) best = hit;
+    }
+    if (best) {
+      aimPoint = aimHit.copy(ray.origin).addScaledVector(ray.direction, best.distance);
+      zone = best.headshot ? 'head' : best.leg ? 'legs' : 'body';
+    } else if (ray.intersectPlane(aimPlane, aimHit)) {
+      aimPoint = aimHit;
+    }
   }
   lastAim = aimPoint;
+  lastAimZone = zone;
   // Camera looks toward +Z, so screen-right is world -X.
   return {
     x: held('KeyA', 'ArrowLeft') - held('KeyD', 'ArrowRight'),
@@ -741,6 +758,7 @@ function updateUI(real) {
     ui.reticle.style.transform = `translate(${(a.x * 0.5 + 0.5) * window.innerWidth}px, ${(-a.y * 0.5 + 0.5) * window.innerHeight}px)`;
     ui.reticle.style.setProperty('--r', `${px}px`);
     ui.reticle.classList.toggle('busy', !player.weaponReady || player.reload.active);
+    for (const z of ['head', 'body', 'legs']) ui.reticle.classList.toggle(z, lastAimZone === z);
   }
 
   const toGoal = Math.max(player.pos.distanceTo(level.goal.pos) - level.goal.radius, 0);

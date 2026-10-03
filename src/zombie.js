@@ -47,9 +47,41 @@ export const ZOMBIE_TYPES = {
 };
 
 export const HIT_RADIUS = 0.28;
-export const HIT_HEIGHT = 1.75;
-const HEAD_HEIGHT = 1.42;
-const LEG_HEIGHT = 0.8; // hits below this are leg shots
+
+const _r1 = new THREE.Vector3();
+const _r2 = new THREE.Vector3();
+const _r3 = new THREE.Vector3();
+
+// Distance along a ray (unit `dir`) to a ball, or null.
+function raySphere(o, dir, c, r) {
+  _r1.subVectors(c, o);
+  const t = _r1.dot(dir);
+  const d2 = _r1.lengthSq() - t * t;
+  if (d2 > r * r) return null;
+  const hit = t - Math.sqrt(r * r - d2);
+  return hit >= 0 ? hit : t >= 0 ? 0 : null;
+}
+
+// Distance along a ray to a capsule from `a` to `b`, or null. Close enough
+// for hit tests: the nearest approach between the ray and the segment,
+// stepped back by the radius.
+function rayCapsule(o, dir, a, b, r) {
+  const seg = _r1.subVectors(b, a);
+  const w = _r2.subVectors(o, a);
+  const segLen2 = seg.lengthSq();
+  const bDot = dir.dot(seg);
+  const d = dir.dot(w);
+  const e = seg.dot(w);
+  const denom = segLen2 - bDot * bDot;
+  let s = denom > 1e-8 ? (e - bDot * d) / denom : 0; // along the segment...
+  s = Math.min(Math.max(s, 0), 1);
+  const t = bDot * s - d; // ...and along the ray
+  if (t < 0) return null;
+  const closest = _r3.copy(a).addScaledVector(seg, s);
+  const d2 = _r2.copy(o).addScaledVector(dir, t).distanceToSquared(closest);
+  if (d2 > r * r) return null;
+  return Math.max(t - Math.sqrt(r * r - d2), 0);
+}
 
 /**
  * Same body system as the player, tuned to look broken: a limp on one leg,
@@ -351,22 +383,33 @@ export class Zombie extends Humanoid {
 
   // Ray vs. vertical capsule (good enough for a top-down shooter); a crawler
   // lying on the road is tested limb by limb instead.
+  // The upright body as its parts: a ball for the head, capsules for the
+  // torso, arms and legs, all where they are this frame. So the head is only
+  // as big as a head (a hunched one carries it low and forward), the legs
+  // are the legs, and a steep ray from the camera picks the part under the
+  // cursor rather than the top of a cylinder.
   raycast(origin, dir) {
     if (this.dead) return null;
     if (this.ragdoll) return this.ragdoll.raycast(origin, dir);
-    const ox = origin.x - this.pos.x;
-    const oz = origin.z - this.pos.z;
-    const a = dir.x * dir.x + dir.z * dir.z;
-    if (a < 1e-6) return null;
-    const b = 2 * (ox * dir.x + oz * dir.z);
-    const c = ox * ox + oz * oz - this.hitRadius * this.hitRadius;
-    const disc = b * b - 4 * a * c;
-    if (disc < 0) return null;
-    const t = (-b - Math.sqrt(disc)) / (2 * a);
-    if (t < 0) return null;
-    const y = origin.y + dir.y * t - this.pos.y; // height up the body
-    if (y < 0 || y > HIT_HEIGHT) return null;
-    return { distance: t, headshot: y > HEAD_HEIGHT, leg: y < LEG_HEIGHT, height: this.pos.y + y };
+    const k = this.hitRadius / HIT_RADIUS; // bulk
+    let best = null;
+    const test = (t, zone) => {
+      if (t !== null && (!best || t < best.distance)) best = { distance: t, zone };
+    };
+    test(raySphere(origin, dir, this.headPos, 0.13), 'head');
+    _v1.copy(this.chestPos).add(_v2.set(0, 0.14, 0));
+    test(rayCapsule(origin, dir, this.pelvisPos, _v1, 0.19 * k), 'body');
+    for (const arm of this.arms) {
+      test(rayCapsule(origin, dir, arm.shoulder, arm.elbow, 0.06 * k), 'body');
+      test(rayCapsule(origin, dir, arm.elbow, arm.wrist, 0.05 * k), 'body');
+    }
+    for (const leg of this.legs) {
+      test(rayCapsule(origin, dir, leg.hip, leg.knee, 0.085 * k), 'legs');
+      test(rayCapsule(origin, dir, leg.knee, leg.ankle, 0.07 * k), 'legs');
+    }
+    if (!best) return null;
+    const y = origin.y + dir.y * best.distance;
+    return { distance: best.distance, headshot: best.zone === 'head', leg: best.zone === 'legs', height: y };
   }
 
   takeHit(dir, damage, hit = {}) {

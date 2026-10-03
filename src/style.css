@@ -566,3 +566,10 @@ body:not(.dev) .dev-only {
 #ammo.melee .reserve::before {
   content: '';
 }
+
+/* On a zombie the reticle says which part: red for the head, amber for the legs. */
+#reticle.head::before { border-color: #ff5a5a; }
+#reticle.head i { background: #ff5a5a; }
+#reticle.body::before { border-color: #ffffff; border-width: 2px; }
+#reticle.legs::before { border-color: #ffc85a; }
+#reticle.legs i { background: #ffc85a; }
