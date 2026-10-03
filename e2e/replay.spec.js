@@ -1,9 +1,9 @@
 import { test, expect } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
 
-// Play a bit for real (keys and mouse), save the replay (F8), load it back
-// and watch it: it has to play out to the end without drifting from what
-// was recorded.
+// Play a bit for real (keys and mouse), save the replay (F8), open it in a
+// fresh page and watch it: it has to play out to the end without drifting
+// from what was recorded.
 test('a run saves as a replay that plays back exactly', async ({ page }) => {
   const errors = [];
   page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
@@ -38,6 +38,9 @@ test('a run saves as a replay that plays back exactly', async ({ page }) => {
   expect(replay.checks.length).toBeGreaterThan(0); // at least one fingerprint to compare
   expect(replay.cmds.some((c) => c[1] === 'reload')).toBe(true);
 
+  // Open it in a fresh page, as if sent to someone else: the street and
+  // everything on it must come out the same there too.
+  await page.reload();
   await page.setInputFiles('#replay-file', file);
   await expect(page.locator('#replay')).toBeVisible();
   await page.keyboard.press('4');

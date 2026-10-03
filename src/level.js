@@ -43,6 +43,7 @@ export function buildStreet(scene) {
     zombieSpawns: [],
     pickupSpots: [], // { type: 'ammo' | 'medkit', pos }
     lamps: [],
+    props: { car: [], dumpster: [], barrier: [] }, // where the Blender models go (props.js)
     goalParts: null,
   };
   const root = new THREE.Group();
@@ -117,6 +118,7 @@ export function buildStreet(scene) {
     const g = new THREE.Group();
     g.position.set(x, 0, z);
     g.rotation.y = yaw;
+    level.props.car.push({ x, z, yaw, color, standIns: [g] });
     const paint = mat(color, 0.55, { metalness: 0.2 });
     const body = block(paint, 1.8, 0.7, 4.3, 0, 0.6, 0);
     const cabin = block(paint, 1.62, 0.55, 2.2, 0, 1.22, -0.2);
@@ -152,7 +154,8 @@ export function buildStreet(scene) {
 
   // ------------------------------------------------------------ clutter
   const barrier = (x, z, yaw) => {
-    add(block(MATS.concrete, 0.6, 0.85, 2.4, x, 0.425, z, yaw), { solid: true });
+    const mesh = add(block(MATS.concrete, 0.6, 0.85, 2.4, x, 0.425, z, yaw), { solid: true });
+    level.props.barrier.push({ x, z, yaw, standIns: [mesh] });
     collider(x, z, 0.3, 1.2, yaw, { top: 0.85, climb: true, vault: true });
   };
   barrier(-1.5, 44, 1.5);
@@ -162,7 +165,8 @@ export function buildStreet(scene) {
   barrier(-1.8, 106, 1.4);
 
   const dumpster = (x, z, yaw) => {
-    add(block(MATS.dumpster, 1.1, 1.2, 2, x, 0.74, z, yaw), { solid: true });
+    const mesh = add(block(MATS.dumpster, 1.1, 1.2, 2, x, 0.74, z, yaw), { solid: true });
+    level.props.dumpster.push({ x, z, yaw, standIns: [mesh] });
     collider(x, z, 0.55, 1, yaw, { top: 1.34, climb: true });
   };
   dumpster(-5.2, 26, 0);

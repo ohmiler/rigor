@@ -12,6 +12,7 @@ import { MELEE } from './weapons.js';
 import { buildStreet, collideCircle, insideCollider, heightAt, findLedge, solidAt, STREET_LENGTH, STREET_EDGE } from './level.js';
 import { NavGrid } from './nav.js';
 import { Post } from './post.js';
+import { dressProps } from './props.js';
 import { Recorder, Playback, mulberry32, newSeed, round, fingerprint } from './replay.js';
 import { Humanoid } from './humanoid.js';
 import { loadParams, ZOMBIE_DEFAULTS, ZOMBIE_KEY, VISIBILITY } from './params.js';
@@ -64,7 +65,20 @@ ground.position.z = STREET_LENGTH / 2;
 ground.receiveShadow = true;
 scene.add(ground);
 
-const level = buildStreet(scene);
+// The street is built from a fixed seed: everyone gets the same one, so a
+// replay from another machine walks the same street. (Random streets will
+// take each run's seed instead.)
+const STREET_SEED = 1;
+const level = (() => {
+  const random = Math.random;
+  Math.random = mulberry32(STREET_SEED);
+  try {
+    return buildStreet(scene);
+  } finally {
+    Math.random = random;
+  }
+})();
+dressProps(level);
 Humanoid.terrain = {
   heightAt: (x, z, maxY) => heightAt(level, x, z, maxY),
   findLedge: (pos, dir) => findLedge(level, pos, dir),
