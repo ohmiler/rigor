@@ -31,6 +31,7 @@ const LEG = [
 ];
 const TOP = [CHEST, ARM[0].sh, ARM[1].sh];
 const BOTTOM = [PELVIS, LEG[0].hip, LEG[1].hip];
+const TORSO = [...TOP, ...BOTTOM];
 
 const Z_AXIS = new THREE.Vector3(0, 0, 1);
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
@@ -112,6 +113,24 @@ export class Ragdoll {
       P(leg.ankle, 0.05, 0.6, 8);
       // Toe tip, from the foot's current orientation.
       P(_a.set(0, -0.02, 0.15).applyQuaternion(leg.foot.quaternion).add(leg.foot.position), 0.04, 0.3, 8);
+    }
+
+    // The torso's shape in its own frame (left, up, front), around its middle:
+    // a crawler's torso is held to this shape in a prone pose (_poseCrawler).
+    {
+      const p = (i) => this.particles[i].pos;
+      const up = new THREE.Vector3().addVectors(p(ARM[0].sh), p(ARM[1].sh)).sub(p(LEG[0].hip)).sub(p(LEG[1].hip)).normalize();
+      const left = new THREE.Vector3().subVectors(p(LEG[0].hip), p(LEG[1].hip));
+      left.addScaledVector(up, -left.dot(up)).normalize();
+      const front = new THREE.Vector3().crossVectors(left, up);
+      const mid = new THREE.Vector3();
+      for (const i of TORSO) mid.add(p(i));
+      mid.divideScalar(TORSO.length);
+      this.neckLength = p(CHEST).distanceTo(p(HEAD));
+      this.torsoShape = TORSO.map((i) => {
+        const o = new THREE.Vector3().subVectors(p(i), mid);
+        return [o.dot(left), o.dot(up), o.dot(front)];
+      });
     }
 
     const link = (a, b, { min = false, stiff = 1, rest } = {}) =>
@@ -205,6 +224,8 @@ export class Ragdoll {
 
   _step(h) {
     const terrain = Humanoid.terrain;
+    // How far into holding the crawl pose (eases in over half a second).
+    this.poseIn = this.drive && this.drive.mode !== 'idle' ? Math.min((this.poseIn ?? 0) + h * 2, 1) : 0;
     if (this.drive) this._drive(h);
 
     for (const p of this.particles) {
@@ -223,6 +244,8 @@ export class Ragdoll {
     for (let it = 0; it < ITERATIONS; it++) {
       for (const c of this.constraints) this._solve(c);
       this._hinges();
+      if (this.drive && this.drive.mode !== 'idle') this._poseCrawler();
+      else this.poseIn = 0;
       for (const p of this.particles) {
         if (p.pinned) continue;
         if (p.pred.y - p.r < p.ground) {
@@ -250,6 +273,18 @@ export class Ragdoll {
       }
       p.pos.copy(p.pred);
       fastest = Math.max(fastest, p.vel.lengthSq());
+    }
+    // A crawler drags itself; it never glides faster than its hauling pace.
+    if (this.drive?.mode === 'crawl') {
+      const cap = this.drive.speed * 1.3;
+      for (const i of [...TORSO, HEAD, NOSE]) {
+        const v = this.particles[i].vel;
+        const hv = Math.hypot(v.x, v.z);
+        if (hv > cap) {
+          v.x *= cap / hv;
+          v.z *= cap / hv;
+        }
+      }
     }
     // Lying still for a moment: stop simulating until something disturbs it.
     this.still = fastest < 0.0025 ? this.still + h : 0;
@@ -306,22 +341,15 @@ export class Ragdoll {
     const chest = P[CHEST];
     const st = (this.crawlState ??= { hand: 0, phase: 'pull', t: 0, from: new THREE.Vector3(), to: new THREE.Vector3() });
 
-    // Propped up on the forearms: chest a little off the road, head up looking ahead.
-    const lift = (p, height, k) => {
-      const target = p.ground + height;
-      if (p.pos.y < target) p.vel.y += (target - p.pos.y) * k * h;
-    };
-    if (d.mode !== 'idle') {
-      lift(chest, 0.3, 160);
-      lift(P[HEAD], 0.42, 220);
-      lift(P[NOSE], 0.44, 120);
-    }
-    // The torso slides when hauled; the legs drag.
+    // The torso slides when hauled; the legs drag. (Its pose: _poseCrawler.)
     for (const i of [PELVIS, CHEST, ...TOP, ...BOTTOM]) P[i].friction = d.mode === 'idle' ? 6 : 2.5;
 
     _a.subVectors(d.target, chest.pos).setY(0);
     const dist = _a.length();
     const dir = dist > 1e-4 ? _a.divideScalar(dist) : _a.set(0, 0, 1);
+    // The way it faces turns toward the target gradually, not in a snap.
+    this.crawlDir ??= dir.clone();
+    this.crawlDir.lerp(dir, 1 - Math.exp(-3 * h)).setY(0).normalize();
 
     if (d.mode === 'grab') {
       for (let i = 0; i < 2; i++) {
@@ -381,6 +409,54 @@ export class Ragdoll {
         st.t = 0;
       }
     }
+  }
+
+  /**
+   * A crawler isn't a free ragdoll: it holds itself in a pose and drags
+   * itself along. Each solver pass pulls (softly) the torso toward its own
+   * shape lying face down, shoulders a little higher than the hips (propped
+   * on its arms), facing the way it's crawling; the head up looking ahead;
+   * the legs trailing out behind, not folding or crossing. The torso keeps
+   * wherever the hands have hauled it: only its turn and height are steered.
+   */
+  _poseCrawler() {
+    const P = this.particles;
+    const fwd = this.crawlDir ?? _a.set(0, 0, 1);
+    // The prone frame: up (hips to shoulders) along the crawl, tilted up a
+    // little; left to the left of it; front (the chest) facing the road.
+    const up = _x.copy(fwd).multiplyScalar(Math.cos(0.32)).addScaledVector(WORLD_UP, Math.sin(0.32)).normalize();
+    const left = _y.crossVectors(WORLD_UP, fwd).normalize();
+    const front = _z.crossVectors(left, up);
+    const mid = _b.set(0, 0, 0);
+    for (const i of TORSO) mid.add(P[i].pred);
+    mid.divideScalar(TORSO.length);
+    const k = 0.18 * this.poseIn;
+    TORSO.forEach((i, n) => {
+      const [l, u, f] = this.torsoShape[n];
+      _c.copy(mid).addScaledVector(left, l).addScaledVector(up, u).addScaledVector(front, f);
+      P[i].pred.lerp(_c, k);
+    });
+    // Head up and looking ahead (at the neck's own length from the chest, so
+    // it doesn't fight the neck and shove the body back); nose in front of it.
+    const chest = P[CHEST].pred;
+    _c.copy(up).addScaledVector(front, -0.3).normalize();
+    _c.multiplyScalar(this.neckLength).add(chest);
+    P[HEAD].pred.lerp(_c, this.poseIn * 0.15);
+    _c.copy(P[HEAD].pred).addScaledVector(fwd, 0.1).addScaledVector(front, 0.02);
+    P[NOSE].pred.lerp(_c, this.poseIn * 0.15);
+    // The shot-out legs are dead weight: they trail out straight behind along
+    // the body, a little apart, knees and toes on the road.
+    const lk = 0.1 * this.poseIn;
+    LEG.forEach((l, n) => {
+      const hip = P[l.hip].pred;
+      const splay = n === 0 ? 1 : -1; // left leg to the left
+      _c.copy(hip).addScaledVector(fwd, -0.45).addScaledVector(left, splay * 0.06);
+      _c.y = P[l.knee].ground + 0.06;
+      P[l.knee].pred.lerp(_c, lk);
+      _c.copy(hip).addScaledVector(fwd, -0.88).addScaledVector(left, splay * 0.12);
+      _c.y = P[l.ank].ground + 0.06;
+      P[l.ank].pred.lerp(_c, lk);
+    });
   }
 
   // ------------------------------------------------------------ tearing apart
