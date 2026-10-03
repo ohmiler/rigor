@@ -518,7 +518,7 @@ export class Zombie extends Humanoid {
       this.legHealth -= damage;
       const i = hit.limb ?? (Math.random() < 0.5 ? 0 : 1);
       this.legDamage[i] += damage;
-      this.legs[i].thigh.mesh.material = this.legs[i].shin.mesh.material = this._bloodied('pants');
+      for (const seg of [this.legs[i].thigh, this.legs[i].shin]) this.repaint(seg.mesh, 'pants', this._bloodied('pants'));
       if (this.health <= 0) this._die(dir, hit);
       else if (this.legHealth <= 0) this._startCrawl(dir);
       else this._updateInjuries();

@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { Humanoid } from './humanoid.js';
+import { characterModel } from './characters.js';
 import { traversalTiming } from './traversal.js';
 import { Ragdoll } from './ragdoll.js';
 import { WEAPONS, HOLSTERS, MELEE, buildWeaponMeshes } from './weapons.js';
@@ -107,6 +108,9 @@ export class Player extends Humanoid {
 
     this._buildGuns();
     this._resetWeapons();
+    // The modelled body, once it has loaded (main.js dresses the first one).
+    const model = characterModel('player');
+    if (model) this.dress(model);
     this._settle();
   }
 

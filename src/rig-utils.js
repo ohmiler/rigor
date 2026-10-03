@@ -9,6 +9,9 @@ const _d = new THREE.Vector3();
 const _p = new THREE.Vector3();
 const _a = new THREE.Vector3();
 const _e = new THREE.Euler(0, 0, 0, 'YXZ');
+const _x = new THREE.Vector3();
+const _z = new THREE.Vector3();
+const _m = new THREE.Matrix4();
 
 // Character-local axes are (right, up, forward). Facing +Z, "right" is three.js -X.
 export function localPoint(out, origin, quat, right, up, fwd) {
@@ -86,20 +89,52 @@ export function solveTwoBone(root, target, lenA, lenB, pole, outMid, outEnd) {
   return dist;
 }
 
-// A capsule limb placed between two joint positions each frame.
+// A limb placed between two joint positions each frame. `mesh` is what's
+// placed (local +Y runs from a to b, the middle at the origin); it holds a
+// capsule, or a modelled part in its place (Humanoid.dress).
 export class Segment {
   constructor(parent, material, length, radius) {
     const geometry = new THREE.CapsuleGeometry(radius, Math.max(length - radius * 2, 0.001), 4, 12);
-    this.mesh = new THREE.Mesh(geometry, material);
-    this.mesh.castShadow = true;
+    this.capsule = new THREE.Mesh(geometry, material);
+    this.capsule.castShadow = true;
+    this.mesh = new THREE.Group();
+    this.mesh.add(this.capsule);
     parent.add(this.mesh);
   }
 
-  place(a, b) {
+  /**
+   * `front` (optional) is roughly the way the limb's front faces (a knee's
+   * way for a leg): it fixes the twist about the limb, which a round capsule
+   * never shows but a modelled one does.
+   */
+  place(a, b, front = null) {
     _d.subVectors(b, a);
     const len = _d.length();
     if (len < 1e-6) return;
     this.mesh.position.addVectors(a, b).multiplyScalar(0.5);
-    this.mesh.quaternion.setFromUnitVectors(UP, _d.divideScalar(len));
+    _d.divideScalar(len);
+    if (front) {
+      _z.copy(front).addScaledVector(_d, -front.dot(_d));
+      if (_z.lengthSq() > 1e-6) {
+        _z.normalize();
+        _x.crossVectors(_d, _z);
+        this.mesh.quaternion.setFromRotationMatrix(_m.makeBasis(_x, _d, _z));
+        return;
+      }
+    }
+    this.mesh.quaternion.setFromUnitVectors(UP, _d);
   }
+}
+
+// Which way a knee (or elbow) faces: away from the line between the joints
+// either side of it, or `fallback` when the limb is straight.
+export function bendFront(out, a, mid, b, fallback) {
+  out.subVectors(b, a);
+  const len2 = out.lengthSq();
+  const t = len2 > 1e-8 ? _a.subVectors(mid, a).dot(out) / len2 : 0;
+  out.multiplyScalar(t).add(a); // the closest point on the line
+  out.subVectors(mid, out);
+  const bend = out.length();
+  // Mostly the bend once there is one; the fallback while nearly straight.
+  return out.multiplyScalar(bend > 1e-4 ? Math.min(bend / 0.04, 1) / bend : 0).addScaledVector(fallback, 1 - Math.min(bend / 0.04, 1));
 }

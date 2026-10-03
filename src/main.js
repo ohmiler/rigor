@@ -13,6 +13,7 @@ import { buildStreet, collideCircle, insideCollider, heightAt, findLedge, solidA
 import { NavGrid } from './nav.js';
 import { Post } from './post.js';
 import { dressProps } from './props.js';
+import { loadCharacter } from './characters.js';
 import { Recorder, Playback, mulberry32, newSeed, round, fingerprint } from './replay.js';
 import { Humanoid } from './humanoid.js';
 import { loadParams, ZOMBIE_DEFAULTS, ZOMBIE_KEY, VISIBILITY } from './params.js';
@@ -133,6 +134,11 @@ function cycleVisibility() {
 applyEnvironment();
 
 const player = new Player(scene, params);
+loadCharacter('player').then((model) => {
+  if (!model) return;
+  player.dress(model);
+  setSkeleton(params.showSkeleton); // the model's own materials follow the skeleton view too
+});
 player.teleport(level.start);
 const effects = new Effects(scene, level.meshes);
 const gore = new Gore(scene);

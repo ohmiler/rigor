@@ -14,6 +14,7 @@ import {
   rightOf,
   STEP_UP,
   UP,
+  bendFront,
 } from './rig-utils.js';
 import { Traversal } from './traversal.js';
 
@@ -26,6 +27,8 @@ const _q1 = new THREE.Quaternion();
 const _k1 = new THREE.Vector3();
 const _k2 = new THREE.Vector3();
 const _k3 = new THREE.Vector3();
+const _f1 = new THREE.Vector3();
+const _f2 = new THREE.Vector3();
 const Z_AXIS = new THREE.Vector3(0, 0, 1);
 // Points on the foot, in the foot block's frame (right, up, forward). A foot
 // standing flat has its sole on the ground with the ankle 7 cm above, 3 cm
@@ -217,8 +220,17 @@ export class Humanoid {
     box(this.chest, m.shirt, 0.38 * k, 0.34, 0.22 * k);
     body.add(this.chest);
 
+    // A primitive wrapped in a group, so a modelled part can take its place.
+    const holder = (mesh) => {
+      const g = new THREE.Group();
+      mesh.parent.add(g);
+      g.add(mesh);
+      mesh.position.set(0, 0, 0);
+      return g;
+    };
+
     // Unit-height box stretched between pelvis and chest each frame.
-    this.abdomen = box(body, m.shirt, 0.3 * k, 1, 0.19 * k);
+    this.abdomen = holder(box(body, m.shirt, 0.3 * k, 1, 0.19 * k));
     this.neck = new Segment(body, m.skin, 0.12, 0.045 * k);
 
     this.head = new THREE.Group();
@@ -249,7 +261,7 @@ export class Humanoid {
         elbow: new THREE.Vector3(),
         wrist: new THREE.Vector3(),
         // The shoulder ball rides on the clavicle, so it moves with the reach.
-        shoulderMesh: sphere(body, m.shirt, 0.065 * k),
+        shoulderMesh: holder(sphere(body, m.shirt, 0.065 * k)),
         upper: new Segment(body, m.shirt, DIMS.upperArm, 0.05 * k),
         fore: new Segment(body, m.skin, DIMS.forearm, 0.04 * k),
         hand,
@@ -282,6 +294,30 @@ export class Humanoid {
       };
     });
 
+    // Where a modelled body goes (dress): each slot, the part that fills it,
+    // and the primitives it replaces.
+    const kids = (g) => g.children.filter((c) => /** @type {any} */ (c).isMesh);
+    this.slots = [
+      { at: this.pelvis, part: 'pelvis', standIns: kids(this.pelvis) },
+      { at: this.chest, part: 'chest', standIns: kids(this.chest) },
+      { at: this.abdomen, part: 'abdomen', standIns: kids(this.abdomen) },
+      { at: this.neck.mesh, part: 'neck', standIns: [this.neck.capsule] },
+      { at: this.head, part: 'head', standIns: kids(this.head) },
+      ...this.arms.flatMap((a) => [
+        { at: a.shoulderMesh, part: 'shoulder', standIns: kids(a.shoulderMesh) },
+        { at: a.upper.mesh, part: 'upperArm', standIns: [a.upper.capsule] },
+        { at: a.fore.mesh, part: 'forearm', standIns: [a.fore.capsule] },
+        { at: a.hand, part: 'hand', standIns: kids(a.hand), mirror: a.side < 0 },
+      ]),
+      ...this.legs.flatMap((l) => [
+        { at: l.thigh.mesh, part: 'thigh', standIns: [l.thigh.capsule] },
+        { at: l.shin.mesh, part: 'shin', standIns: [l.shin.capsule] },
+        { at: l.foot, part: 'foot', standIns: kids(l.foot) },
+        { at: l.toe, part: 'toe', standIns: kids(l.toe) },
+      ]),
+    ];
+    this.dressed = false;
+
     // Debug joint markers drawn on top of everything.
     const markerGeo = new THREE.SphereGeometry(0.022, 10, 8);
     const jointMat = new THREE.MeshBasicMaterial({ color: '#ff5d73', depthTest: false });
@@ -306,6 +342,51 @@ export class Humanoid {
       { point: this.hands.left.target, mesh: marker(targetMat) },
       { point: this.hands.right.target, mesh: marker(targetMat) },
     );
+  }
+
+  /**
+   * Swap the primitives for a modelled body (characters.js): every part
+   * found in `model` by name goes in its slot, modelled in that slot's own
+   * frame; a part the model lacks keeps its primitive. Materials named like
+   * this body's own (Skin, Shirt, Pants, Shoes, Cap) become those, so the
+   * look's colours, blood and the skeleton view all still apply; any others
+   * are this body's own copies.
+   * @param {THREE.Object3D} model
+   */
+  dress(model) {
+    if (this.dressed) return;
+    this.dressed = true;
+    const materialFor = (src) => {
+      const key = src.name.toLowerCase();
+      this.materials[key] ??= src.clone();
+      return this.materials[key];
+    };
+    for (const slot of this.slots) {
+      const part = model.getObjectByName(slot.part);
+      if (!part) continue;
+      const copy = part.clone(true);
+      copy.position.set(0, 0, 0);
+      copy.quaternion.identity();
+      if (slot.mirror) copy.scale.x = -1; // a left hand from the right one
+      copy.traverse((o) => {
+        if (!(/** @type {any} */ (o).isMesh)) return;
+        const mesh = /** @type {THREE.Mesh} */ (o);
+        mesh.material = materialFor(mesh.material);
+        mesh.castShadow = true;
+      });
+      slot.at.add(copy);
+      for (const s of slot.standIns) s.visible = false;
+    }
+  }
+
+  // Swap one of this body's materials for another on every part that wears
+  // it (blood soaking into the trousers).
+  repaint(root, kind, material) {
+    const from = this.materials[kind];
+    root.traverse((o) => {
+      const mesh = /** @type {THREE.Mesh} */ (o);
+      if (mesh.isMesh && mesh.material === from) mesh.material = material;
+    });
   }
 
   setSkeleton(on) {
@@ -969,6 +1050,7 @@ export class Humanoid {
     this.neck.place(
       localPoint(_v1, this.chestPos, this.chestQuat, 0, 0.15, 0),
       localPoint(_v2, this.headPos, this.headQuat, 0, -0.08, 0),
+      localDir(_f2, this.chestQuat, 0, 0, 1),
     );
 
     // Hands chase their targets through a spring, so they carry momentum.
@@ -1015,9 +1097,11 @@ export class Humanoid {
       localDir(_v3, this.chestQuat, arm.side * (0.6 + 0.5 * plant), -1 + 0.6 * plant, -0.35 - 0.3 * plant);
       solveTwoBone(arm.shoulder, hand.pos, DIMS.upperArm, DIMS.forearm, _v3, arm.elbow, arm.wrist);
       // A part shot off has gone with the gore; nothing to lay out.
-      if (!arm.lostUpper) arm.upper.place(arm.shoulder, arm.elbow);
+      // The arm's front faces away from the way the elbow points.
+      bendFront(_f1, arm.shoulder, arm.elbow, arm.wrist, localDir(_f2, this.chestQuat, 0, 0, -1)).negate();
+      if (!arm.lostUpper) arm.upper.place(arm.shoulder, arm.elbow, _f1);
       if (arm.lostFore) continue;
-      arm.fore.place(arm.elbow, arm.wrist);
+      arm.fore.place(arm.elbow, arm.wrist, _f1);
 
       // Hand follows the forearm, or lies flat (palm down) when planted on a ledge.
       _v1.subVectors(arm.wrist, arm.elbow).normalize();
@@ -1072,8 +1156,10 @@ export class Humanoid {
       if (solid && (this.traversal || leg.kneeTurn || solid(leg.knee) || solid(_k2.lerpVectors(leg.knee, leg.ankle, 0.3)))) {
         this._clearKnee(leg, _v3, dt);
       } else leg.kneeTurn = 0;
-      leg.thigh.place(leg.hip, leg.knee);
-      leg.shin.place(leg.knee, leg.ankle);
+      // The leg's front faces where the knee points (the foot's way when straight).
+      bendFront(_f1, leg.hip, leg.knee, leg.ankle, _f2.set(0, 0, 1).applyQuaternion(_qf));
+      leg.thigh.place(leg.hip, leg.knee, _f1);
+      leg.shin.place(leg.knee, leg.ankle, _f1);
       // Running, a foot in the air hangs off the shin (roughly square to it,
       // toes a little pointed) instead of staying level with the ground: the
       // shin swinging up behind would otherwise fold the foot back on itself.

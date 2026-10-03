@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { Humanoid, FOOT_ANKLE } from './humanoid.js';
-import { localPoint } from './rig-utils.js';
+import { localPoint, bendFront } from './rig-utils.js';
 
 // A body gone limp: its joints become balls joined by sticks (position-based
 // dynamics), falling under gravity, landing on whatever is below, and pushed
@@ -44,6 +44,8 @@ const _y = new THREE.Vector3();
 const _z = new THREE.Vector3();
 const _m = new THREE.Matrix4();
 const _q = new THREE.Quaternion();
+const _f = new THREE.Vector3();
+const _g = new THREE.Vector3();
 
 // Orientation from a rough "left" (local +X) and "up" (local +Y).
 function basis(out, left, up) {
@@ -641,9 +643,9 @@ export class Ragdoll {
       b.abdomen.scale.y = Math.max(_c.distanceTo(_d), 0.01);
     }
     if (this.neckCut) {
-      b.neck.place(localPoint(_c, b.chestPos, b.chestQuat, 0, 0.15, 0), localPoint(_d, b.chestPos, b.chestQuat, 0, 0.21, 0));
+      b.neck.place(localPoint(_c, b.chestPos, b.chestQuat, 0, 0.15, 0), localPoint(_d, b.chestPos, b.chestQuat, 0, 0.21, 0), _g.set(0, 0, 1).applyQuaternion(b.chestQuat));
     } else {
-      b.neck.place(localPoint(_c, b.chestPos, b.chestQuat, 0, 0.15, 0), localPoint(_d, b.headPos, b.headQuat, 0, -0.08, 0));
+      b.neck.place(localPoint(_c, b.chestPos, b.chestQuat, 0, 0.15, 0), localPoint(_d, b.headPos, b.headQuat, 0, -0.08, 0), _g.set(0, 0, 1).applyQuaternion(b.chestQuat));
     }
 
     b.arms.forEach((arm, i) => {
@@ -652,9 +654,10 @@ export class Ragdoll {
       arm.elbow.copy(P(m.el));
       arm.wrist.copy(P(m.wr));
       arm.shoulderMesh.position.copy(arm.shoulder);
-      if (!arm.lostUpper) arm.upper.place(P(m.sh), P(m.el));
+      bendFront(_f, P(m.sh), P(m.el), P(m.wr), _g.set(0, 0, -1).applyQuaternion(b.chestQuat)).negate();
+      if (!arm.lostUpper) arm.upper.place(P(m.sh), P(m.el), _f);
       if (arm.lostFore) return; // shot off earlier
-      arm.fore.place(P(m.fore), P(m.wr));
+      arm.fore.place(P(m.fore), P(m.wr), _f);
       _c.subVectors(P(m.wr), P(m.fore)).normalize();
       arm.hand.quaternion.setFromUnitVectors(Z_AXIS, _c);
       arm.hand.position.copy(P(m.wr));
@@ -665,8 +668,9 @@ export class Ragdoll {
       leg.hip.copy(P(m.hip));
       leg.knee.copy(P(m.knee));
       leg.ankle.copy(P(m.ank));
-      leg.thigh.place(P(m.hip), P(m.knee));
-      leg.shin.place(P(m.shin), P(m.ank));
+      bendFront(_f, P(m.hip), P(m.knee), P(m.ank), _g.subVectors(P(m.toe), P(m.ank)));
+      leg.thigh.place(P(m.hip), P(m.knee), _f);
+      leg.shin.place(P(m.shin), P(m.ank), _f);
       basisFwd(_q, _c.subVectors(P(m.toe), P(m.ank)), _d.subVectors(P(m.shin), P(m.ank)));
       leg.foot.quaternion.copy(_q);
       leg.foot.position.copy(P(m.ank)).sub(_c.copy(FOOT_ANKLE).applyQuaternion(_q));
