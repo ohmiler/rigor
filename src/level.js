@@ -26,7 +26,8 @@ const MATS = {
   tire: mat('#151515', 0.9),
   glass: mat('#1c2530', 0.25, { metalness: 0.3 }),
 };
-const BUILDING_COLORS = ['#6b6259', '#5a5f66', '#7a6d5d', '#4f5552', '#6e5f5a', '#5c5348', '#666a70'];
+// Yaowarat's shophouses: faded cream, ochre, mint, salmon, the odd grey.
+const BUILDING_COLORS = ['#b8a98a', '#a8925f', '#8fa08c', '#b08a78', '#9a8f7a', '#7d8a8c', '#a37f5c'];
 const CAR_COLORS = ['#7a2b28', '#2f4a6b', '#c9c6bd', '#3c3e42', '#6b6a3a', '#24282e', '#8a8478'];
 
 /**
@@ -43,7 +44,7 @@ export function buildStreet(scene) {
     zombieSpawns: [],
     pickupSpots: [], // { type: 'ammo' | 'medkit', pos }
     lamps: [],
-    props: { car: [], dumpster: [], barrier: [] }, // where the Blender models go (props.js)
+    props: { car: [], dumpster: [], barrier: [], stall: [], tables: [], tuktuk: [] }, // where the Blender models go (props.js)
     buildings: [], // street fronts to dress (props.js)
     goalParts: null,
   };
@@ -178,6 +179,42 @@ export function buildStreet(scene) {
   dumpster(5.3, 47, 0.1);
   dumpster(-5.4, 71, -0.08);
   dumpster(5.2, 99, 0);
+
+  // Yaowarat's night market, abandoned: food carts along the kerb (up on
+  // one, out of reach for a moment) and folding tables to vault. Placed by
+  // hand, clear of the lamps, bins and supplies.
+  const STALL_COLORS = ['#3a6b8a', '#b5462f', '#d8b23a', '#3f7a4f', '#c9c6bd'];
+  const stall = (x, z, color) => {
+    const mesh = add(block(MATS.dumpster, 0.8, 1.0, 1.5, x, 0.5, z), { solid: true });
+    level.props.stall.push({ x, z, yaw: 0, color, standIns: [mesh] });
+    collider(x, z, 0.4, 0.75, 0, { top: 1.0, climb: true });
+  };
+  const tables = (x, z, yaw = 0) => {
+    const mesh = add(block(MATS.concrete, 0.7, 0.75, 1.2, x, 0.375, z, yaw), { solid: true });
+    level.props.tables.push({ x, z, yaw, standIns: [mesh] });
+    collider(x, z, 0.35, 0.6, yaw, { top: 0.75, climb: true, vault: true });
+  };
+  // Tuk-tuks left among the cars: up on the canopy is the highest perch on
+  // the street short of a dumpster.
+  const tuktuk = (x, z, yaw, color) => {
+    const mesh = add(block(MATS.dumpster, 1.3, 1.75, 2.6, x, 0.875, z, yaw), { solid: true });
+    level.props.tuktuk.push({ x, z, yaw, color, standIns: [mesh] });
+    collider(x, z, 0.65, 1.3, yaw, { top: 1.75, climb: true });
+  };
+  tuktuk(1.9, 27.5, 0.25, '#1f6fb5');
+  tuktuk(2.4, 70, 3.0, '#2f8a3a');
+  tuktuk(-2.6, 101, -0.15, '#d94a1f');
+
+  stall(-5.2, 19.5, STALL_COLORS[0]);
+  tables(-5.1, 22);
+  stall(5.3, 31, STALL_COLORS[1]);
+  stall(-5.2, 53, STALL_COLORS[2]);
+  tables(-5.1, 55.5, 0.2);
+  stall(5.3, 63, STALL_COLORS[3]);
+  tables(5.1, 65.5, -0.15);
+  stall(-5.2, 79, STALL_COLORS[4]);
+  stall(5.3, 84, STALL_COLORS[1]);
+  tables(5.1, 86.5);
 
   // Street lamps; a few still work and light the road at night.
   for (let z = 10; z < STREET_LENGTH - 4; z += 18) {

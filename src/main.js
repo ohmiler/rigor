@@ -14,7 +14,7 @@ import { NavGrid } from './nav.js';
 import { Post } from './post.js';
 import { Director } from './director.js';
 import { CarAlarms } from './alarms.js';
-import { dressProps } from './props.js';
+import { dressProps, animateNeon } from './props.js';
 import { loadCharacter } from './characters.js';
 import { Recorder, Playback, mulberry32, newSeed, round, fingerprint } from './replay.js';
 import { Humanoid } from './humanoid.js';
@@ -1173,6 +1173,7 @@ function frame(timestamp) {
   effects.update(dt);
   gore.update(dt);
   alarms.animate(real, (car) => sound.carAlarm(car, alarms.lastBeat));
+  animateNeon(level, timestamp / 1000, params.night);
 
   updateCamera(real);
   updateUI(real);

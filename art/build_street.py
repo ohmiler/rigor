@@ -21,7 +21,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from kit import reset, material, box, loft, join, export  # noqa: E402
+from kit import reset, material, box, loft, prism, join, export  # noqa: E402
 
 SHOP_H, FLOOR_H, BAY = 3.6, 3.0, 3.0
 
@@ -180,7 +180,248 @@ def build_street():
     ], smooth=False))
     pieces.append(join('hatch', [box('hatch', (0, 0.25, 0), (0.9, 0.5, 0.9), trim), box('lid', (0, 0.52, 0), (1.0, 0.06, 1.0), metal)], smooth=False))
 
+    build_yaowarat(pieces, wall, trim, concrete, glass, lit, dark, metal)
     export('street', pieces)
+
+
+# ---------------------------------------------------------------- Yaowarat
+# Chinatown, Bangkok: Sino-Portuguese shophouses (arched windows, louvred
+# shutters, a balustraded parapet), gold shops, and neon everywhere. The
+# Chinese on the signs is made up: strokes that read as characters from
+# the camera, not words.
+#
+# More recoloured materials: "Shutter" (per building), "Neon" and "Glyph"
+# (per sign; they glow, and the game lights them only at night).
+
+def glyph(rnd, cx, cy, size, face_x, mat, thick=0.025, along='z'):
+    """One made-up character in a `size` square centred on (cx, cy) of a
+    sign face. The face is the plane x = face_x (a blade sign, the
+    character's across running along z) or z = face_x (a flat sign, along
+    x). Built like a Chinese character: one part, or two side by side or
+    stacked, each a boxed part (口), a lattice of strokes, or a cross with
+    sweeping diagonals (木, 人)."""
+    w = 0.075  # stroke width, as a share of the square
+    strokes = []  # (u, v, du, dv, angle) in the unit square, centred
+
+    def bar(u, v, du, dv, angle=0.0):
+        strokes.append((u, v, du, dv, angle))
+
+    def part(u0, u1, v0, v1):
+        uc, vc, uw, vh = (u0 + u1) / 2, (v0 + v1) / 2, u1 - u0, v1 - v0
+        kind = rnd.random()
+        if kind < 0.3:  # a box, maybe split inside
+            i = 0.1
+            bar(uc, v1 - vh * i, uw * (1 - 2 * i), w)
+            bar(uc, v0 + vh * i, uw * (1 - 2 * i), w)
+            bar(u0 + uw * i, vc, w, vh * (1 - 2 * i))
+            bar(u1 - uw * i, vc, w, vh * (1 - 2 * i))
+            if rnd.random() < 0.6:
+                bar(uc, vc, uw * (1 - 2 * i), w)
+        elif kind < 0.75:  # a lattice: rows across, one or two strokes down
+            rows = rnd.randint(2, 4)
+            for k in range(rows):
+                length = uw * rnd.uniform(0.55, 0.95)
+                bar(uc + rnd.uniform(-0.1, 0.1) * uw, v0 + vh * (k + 0.5) / rows, length, w)
+            for _ in range(rnd.randint(1, 2)):
+                h = vh * rnd.uniform(0.6, 1.0)
+                bar(uc + rnd.uniform(-0.3, 0.3) * uw, vc + rnd.uniform(-0.1, 0.1) * vh, w, h)
+        else:  # a cross with two sweeps down from the middle
+            bar(uc, vc + vh * 0.2, uw * 0.85, w)
+            bar(uc, vc, w, vh * 0.9)
+            d = min(uw, vh) * 0.5
+            bar(uc - uw * 0.2, vc - vh * 0.22, w, d, 0.7)
+            bar(uc + uw * 0.2, vc - vh * 0.22, w, d, -0.7)
+
+    layout = rnd.random()
+    if layout < 0.3:
+        part(-0.5, 0.5, -0.5, 0.5)
+    elif layout < 0.7:  # side by side, the left part narrower
+        split = rnd.uniform(-0.15, 0.05)
+        part(-0.5, split - 0.04, -0.5, 0.5)
+        part(split + 0.04, 0.5, -0.5, 0.5)
+    else:  # stacked
+        split = rnd.uniform(-0.05, 0.15)
+        part(-0.5, 0.5, split + 0.04, 0.5)
+        part(-0.5, 0.5, -0.5, split - 0.04)
+    if rnd.random() < 0.35:  # a dot on top
+        bar(rnd.uniform(-0.2, 0.2), 0.47, w * 1.2, w * 1.4, 0.5)
+
+    parts = []
+    for u, v, du, dv, angle in strokes:
+        u, v, du, dv = u * size, v * size, du * size, dv * size
+        if along == 'z':
+            parts.append(box('stroke', (face_x, cy + v, cx + u), (thick, dv, du), mat, rot=(-angle, 0, 0) if angle else None))
+        else:
+            parts.append(box('stroke', (cx + u, cy + v, face_x), (du, dv, thick), mat, rot=(0, 0, angle) if angle else None))
+    return parts
+
+
+def build_yaowarat(pieces, wall, trim, concrete, glass, lit, dark, metal):
+    import random
+
+    stucco = material('Stucco', '#d9d0bc', 0.9)  # mouldings, always pale
+    shutter = material('Shutter', '#3f6b55', 0.8)
+    neon = material('Neon', '#ff3b30', 0.4, 0.0, 3.0)
+    glyph_m = material('Glyph', '#ffe08a', 0.4, 0.0, 3.0)
+    board = material('Board', '#2a0d0b', 0.8)
+    red = material('ShopRed', '#8a1612', 0.6)
+    gold = material('Gold', '#d4a531', 0.3, 0.8, 0.4)
+
+    def arc(r, cx, cy, n=12, a0=0.0, a1=math.pi):
+        return [(cx + r * math.cos(a0 + (a1 - a0) * i / n), cy + r * math.sin(a0 + (a1 - a0) * i / n)) for i in range(n + 1)]
+
+    # ---- an arched window with louvred shutters (one bay of an upper floor)
+    def louvre(x, y0, y1, w, z, closed=False):
+        h = y1 - y0
+        slats = [box('slat', (x, y0 + 0.08 + i * 0.11, z + 0.02), (w - 0.08, 0.03, 0.03), shutter, rot=(-0.5, 0, 0)) for i in range(int((h - 0.12) / 0.11))]
+        return [box('stile', (x - w / 2 + 0.03, y0 + h / 2, z), (0.05, h, 0.04), shutter), box('stile', (x + w / 2 - 0.03, y0 + h / 2, z), (0.05, h, 0.04), shutter),
+                box('rail', (x, y0 + 0.03, z), (w, 0.05, 0.04), shutter), box('rail', (x, y1 - 0.03, z), (w, 0.05, 0.04), shutter), *slats]
+
+    def arch_window(name, pane, open_shutters=True, closed=False, extra=()):
+        y0, spring, R, r = 0.75, 2.05, 0.74, 0.62
+        band = arc(R, 0, spring) + list(reversed(arc(r, 0, spring)))
+        parts = [
+            prism('arch', band, 'z', 0.0, 0.1, stucco),
+            box('keystone', (0, spring + R - 0.02, 0.07), (0.16, 0.22, 0.12), stucco),
+            box('jamb', (-(R + r) / 2, (y0 + spring) / 2, 0.05), (R - r, spring - y0, 0.1), stucco),
+            box('jamb', ((R + r) / 2, (y0 + spring) / 2, 0.05), (R - r, spring - y0, 0.1), stucco),
+            box('sill', (0, y0 - 0.04, 0.1), (1.75, 0.08, 0.2), stucco),
+            box('apron', (0, y0 - 0.25, 0.04), (1.2, 0.3, 0.06), stucco),
+        ]
+        if closed:
+            parts += louvre(-r / 2, y0, spring, r, 0.03) + louvre(r / 2, y0, spring, r, 0.03)
+            parts.append(prism('fan', arc(r, 0, spring), 'z', 0.0, 0.03, dark))
+        else:
+            parts += pane
+            parts.append(prism('fan', arc(r, 0, spring), 'z', 0.0, 0.03, pane[0].data.materials[0]))
+            parts += [box('glazing', (0, spring + r * 0.5, 0.04), (0.04, r, 0.03), trim), box('transom', (0, spring, 0.04), (2 * r, 0.04, 0.03), trim)]
+        if open_shutters and not closed:
+            parts += louvre(-(R + 0.36), y0, spring + 0.1, 0.62, 0.04) + louvre(R + 0.36, y0, spring + 0.1, 0.62, 0.04)
+        parts += list(extra)
+        pieces.append(join(name, parts, smooth=False))
+
+    pane = lambda m: [box('glass', (0, (0.75 + 2.05) / 2, 0.02), (1.24, 1.3, 0.03), m), box('mullion', (0, 1.4, 0.04), (0.04, 1.3, 0.03), trim)]
+    arch_window('arch', pane(glass))
+    arch_window('arch_lit', pane(lit))
+    arch_window('arch_shut', [], open_shutters=False, closed=True)
+    arch_window('arch_ac', pane(glass), open_shutters=False, extra=[
+        box('ac', (0.25, 0.32, 0.26), (0.72, 0.44, 0.46), metal),
+        box('grille', (0.25, 0.32, 0.495), (0.6, 0.34, 0.01), dark),
+        box('bracket', (0.25, 0.08, 0.22), (0.6, 0.04, 0.4), trim),
+    ])
+
+    # ---- a parapet along the roof edge, one bay of it: base, balusters, cap
+    balusters = [loft('baluster', [(0.12, 0.06, 0.06), (0.2, 0.09, 0.09), (0.42, 0.05, 0.05), (0.6, 0.08, 0.08), (0.66, 0.06, 0.06)], stucco, segments=8, smooth=False) for _ in range(9)]
+    for i, b in enumerate(balusters):
+        b.location.x += -1.2 + i * 0.3
+        b.location.y -= 0.1  # Blender y is back: 0.1 m out from the wall
+    pieces.append(join('parapet', [
+        box('base', (0, 0.06, 0.12), (BAY, 0.12, 0.26), stucco),
+        *balusters,
+        box('cap', (0, 0.72, 0.12), (BAY, 0.1, 0.3), stucco),
+        box('band', (0, -0.18, 0.06), (BAY, 0.3, 0.12), stucco),
+    ], smooth=False))
+
+    # ---- a gold shop: red front, gold frame, the shutter half down, a sign
+    # with gold characters
+    def goldshop(variant):
+        rnd = random.Random(7 + variant * 23)
+        parts = [
+            box('plinth', (0, 0.175, 0.06), (BAY, 0.35, 0.12), red),
+            box('panel', (-1.3, 1.55, 0.03), (0.4, 2.4, 0.06), red),
+            box('panel', (1.3, 1.55, 0.03), (0.4, 2.4, 0.06), red),
+            box('frame', (0, 2.72, 0.07), (2.3, 0.06, 0.06), gold),
+            box('frame', (-1.12, 1.55, 0.07), (0.06, 2.4, 0.06), gold),
+            box('frame', (1.12, 1.55, 0.07), (0.06, 2.4, 0.06), gold),
+            box('display', (0, 0.62, 0.2), (2.1, 0.5, 0.36), red),
+            box('displaytop', (0, 0.88, 0.2), (2.1, 0.03, 0.36), glass),
+            box('glass', (0, 1.3, 0.02), (2.2, 1.0, 0.03), lit),
+            box('shutter', (0, 2.15, 0.06), (2.2, 1.1, 0.04), metal),
+            *[box('rib', (0, 1.66 + i * 0.12, 0.085), (2.18, 0.025, 0.02), metal) for i in range(9)],
+            box('housing', (0, 2.62, 0.13), (2.3, 0.22, 0.22), metal),
+            box('sign', (0, 3.12, 0.09), (BAY, 0.6, 0.14), red),
+            box('signframe', (0, 3.43, 0.16), (BAY, 0.04, 0.04), gold),
+            box('signframe', (0, 2.81, 0.16), (BAY, 0.04, 0.04), gold),
+            box('wall', (0, 3.52, 0.01), (BAY, 0.16, 0.02), wall),
+        ]
+        n = rnd.choice((3, 4))
+        for i in range(n):
+            parts += glyph(rnd, (i - (n - 1) / 2) * 2.4 / n, 3.12, 0.44, 0.17, gold, along='x')
+        pieces.append(join(f'goldshop_{variant}', parts, smooth=False))
+
+    goldshop(0)
+    goldshop(1)
+
+    # ---- neon tubes round a shop sign, with characters on it (a few, so
+    # neighbours don't say the same thing)
+    for variant in range(4):
+        rnd = random.Random(11 + variant * 17)
+        w, y0, y1, z = BAY - 0.1, 2.83, 3.41, 0.18
+        tube = [box('tube', (0, y0, z), (w, 0.035, 0.035), neon), box('tube', (0, y1, z), (w, 0.035, 0.035), neon),
+                box('tube', (-w / 2, (y0 + y1) / 2, z), (0.035, y1 - y0, 0.035), neon), box('tube', (w / 2, (y0 + y1) / 2, z), (0.035, y1 - y0, 0.035), neon)]
+        n = rnd.choice((3, 4, 4, 5))
+        for i in range(n):
+            tube += glyph(rnd, (i - (n - 1) / 2) * 2.5 / n, 3.12, 0.42, 0.175, glyph_m, along='x')
+        pieces.append(join(f'sign_neon_{variant}', tube, smooth=False))
+
+    # ---- blade signs standing out from the wall above the shops: a dark
+    # board, a neon border both sides, characters stacked down it. Thin
+    # across the street's view and no deeper than 0.66 m, so they hide
+    # little from the camera above.
+    def blade(name, n, seed):
+        cell, z0, z1, t = 0.48, 0.1, 0.66, 0.1
+        h = n * cell + 0.2
+        zc = (z0 + z1) / 2
+        parts = [
+            box('board', (0, h / 2, zc), (t, h, z1 - z0), board),
+            box('arm', (0, h - 0.15, 0.05), (0.04, 0.04, 0.12), metal),
+            box('arm', (0, 0.15, 0.05), (0.04, 0.04, 0.12), metal),
+            box('cap', (0, h + 0.03, zc), (t + 0.04, 0.06, z1 - z0 + 0.04), metal),
+        ]
+        chars = [seed * 31 + k for k in range(n)]  # the same characters both sides
+        for side in (-1, 1):
+            fx = side * (t / 2 + 0.012)
+            parts += [box('tube', (fx, 0.05, zc), (0.025, 0.03, z1 - z0 - 0.02), neon), box('tube', (fx, h - 0.05, zc), (0.025, 0.03, z1 - z0 - 0.02), neon),
+                      box('tube', (fx, h / 2, z0 + 0.02), (0.025, h - 0.1, 0.03), neon), box('tube', (fx, h / 2, z1 - 0.02), (0.025, h - 0.1, 0.03), neon)]
+            for k in range(n):
+                parts += glyph(random.Random(chars[k]), zc, 0.1 + cell * (k + 0.5), 0.36, fx, glyph_m)
+        pieces.append(join(name, parts, smooth=False))
+
+    blade('neon_blade', 4, 3)
+    blade('neon_blade_b', 5, 5)
+    blade('neon_blade_tall', 8, 9)
+
+    # ---- across the street, high up: a string of red lanterns, and loose
+    # power cables. Modelled from one building line to the other (x -6.5 to
+    # 6.5), y up from the road. The lanterns glow at night ("Lantern").
+    lantern_m = material('Lantern', '#b0140c', 0.6, 0.0, 1.0)
+    cable = material('Cable', '#101112', 0.8)
+
+    def sag(x, y0, drop, half=6.5):
+        return y0 - drop * (1 - (x / half) ** 2)
+
+    def wire(y0, drop, z, mat, t=0.025, n=16):
+        parts = []
+        for i in range(n):
+            xa, xb = -6.5 + 13 * i / n, -6.5 + 13 * (i + 1) / n
+            ya, yb = sag(xa, y0, drop), sag(xb, y0, drop)
+            length = math.hypot(xb - xa, yb - ya)
+            parts.append(box('wire', ((xa + xb) / 2, (ya + yb) / 2, z), (length + 0.01, t, t), mat, rot=(0, 0, math.atan2(yb - ya, xb - xa))))
+        return parts
+
+    string = wire(6.3, 0.7, 0, cable, 0.02)
+    for i in range(9):
+        x = -5.2 + i * 1.3
+        y = sag(x, 6.3, 0.7) - 0.38
+        string += [
+            box('cord', (x, y + 0.28, 0), (0.01, 0.2, 0.01), cable),
+            loft('lantern', [(y - 0.12, 0.04, 0.04, x, 0), (y - 0.09, 0.095, 0.095, x, 0), (y, 0.12, 0.12, x, 0), (y + 0.09, 0.095, 0.095, x, 0), (y + 0.12, 0.04, 0.04, x, 0)], lantern_m, segments=10, smooth=True),
+            box('cap', (x, y + 0.13, 0), (0.09, 0.03, 0.09), gold),
+            box('cap', (x, y - 0.13, 0), (0.09, 0.03, 0.09), gold),
+            box('tassel', (x, y - 0.22, 0), (0.025, 0.14, 0.025), lantern_m),
+        ]
+    pieces.append(join('lanterns', string, smooth=None))
+    pieces.append(join('cables', [*wire(7.1, 1.1, 0.0, cable), *wire(6.9, 0.8, 0.25, cable), *wire(7.4, 1.4, -0.2, cable, 0.035)], smooth=False))
 
 
 build_street()

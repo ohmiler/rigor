@@ -12,7 +12,7 @@ import * as THREE from 'three';
 // switch weapon, throw...) on the step they happened, and a fingerprint of
 // the world every second so a replay that drifts says where.
 
-export const REPLAY_VERSION = 6; // 2: the street itself is seeded; 3: whole-storey buildings; 4: the AI Director; 5: hordes; 6: car alarms
+export const REPLAY_VERSION = 7; // 2: the street itself is seeded; 3: whole-storey buildings; 4: the AI Director; 5: hordes; 6: car alarms; 7: Yaowarat stalls
 
 // A small, fast, seedable generator (good enough for dice, not for secrets).
 export function mulberry32(seed) {
