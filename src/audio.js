@@ -473,6 +473,20 @@ export class Sound {
     }
   }
 
+  // One half-second of a car alarm: the rising whoop of the siren, and the
+  // horn on every other one. Called on each beat while it rings, from where
+  // the car is, so it pans and fades as you move.
+  carAlarm(pos, beat) {
+    const o = this._out(pos, 90, 0.55);
+    if (!o) return;
+    this._tone(o, { dur: 0.42, type: 'square', freq: 520, freqEnd: 1450, gain: 0.32, attack: 0.01 });
+    this._tone(o, { dur: 0.42, type: 'square', freq: 524, freqEnd: 1460, gain: 0.18, attack: 0.01 });
+    if (beat % 2 === 0) {
+      this._tone(o, { at: 0.05, dur: 0.3, type: 'sawtooth', freq: 410, gain: 0.25, attack: 0.01 });
+      this._tone(o, { at: 0.05, dur: 0.3, type: 'sawtooth', freq: 495, gain: 0.2, attack: 0.01 });
+    }
+  }
+
   died() {
     const o = this._out(null, 0, 0.5);
     if (!o) return;

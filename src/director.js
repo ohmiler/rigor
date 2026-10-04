@@ -86,9 +86,21 @@ export class Director {
     this.seenDead = new WeakSet();
     this.mobs = 0;
     this.hordeTimer = roll(this.t.hordeFirst);
-    // The horde on its way: { dir: 1 ahead | -1 behind, warn: seconds left, queue }.
+    // The horde on its way: { dir: 1 ahead | -1 behind | 0 both, warn: seconds left, queue }.
     this.horde = null;
     this.hordes = 0;
+  }
+
+  /**
+   * Something loud (a car alarm): a horde from both ends of the street, on
+   * its way now, whatever the pacing says; it's the build-up from here.
+   * Nothing more if one is already coming.
+   */
+  panic(ctx, warn = 2) {
+    if (this.horde) return;
+    this.horde = { dir: 0, warn, queue: [] };
+    if (this.phase !== 'build') this._enter('build');
+    ctx.onHorde?.(0);
   }
 
   /** Seconds until a horde arrives (0 when none is coming) and which way. */
@@ -226,10 +238,13 @@ export class Director {
       const [lo, hi] = t.hordeSize;
       const room = t.aliveMax - zombies.filter((z) => !z.dead).length;
       const size = Math.min(Math.round(lo + (hi - lo) * along + (Math.random() - 0.5) * 6), room);
-      let at = this.spawnPoint(player.pos, isFree, h.dir);
-      // Nowhere that way (the end of the street): the other way, then.
-      if (!at) at = this.spawnPoint(player.pos, isFree, -h.dir);
-      for (let i = 0; at && i < size; i++) {
+      // Where they come from: one way, or both (half each). Nowhere that way
+      // (the end of the street)? The other way, then.
+      const ways = (h.dir ? [h.dir] : [1, -1]).map((dir) => this.spawnPoint(player.pos, isFree, dir));
+      const other = ways.length === 1 && !ways[0] ? this.spawnPoint(player.pos, isFree, -h.dir) : null;
+      const spots = [...ways, other].filter(Boolean);
+      for (let i = 0; spots.length && i < size; i++) {
+        const at = spots[i % spots.length];
         for (let tries = 0; tries < 8; tries++) {
           const x = (Math.random() * 2 - 1) * (this.street.edge - 0.5);
           const z = at.z + (Math.random() - 0.5) * 8;

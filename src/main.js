@@ -13,6 +13,7 @@ import { buildStreet, collideCircle, insideCollider, heightAt, findLedge, solidA
 import { NavGrid } from './nav.js';
 import { Post } from './post.js';
 import { Director } from './director.js';
+import { CarAlarms } from './alarms.js';
 import { dressProps } from './props.js';
 import { loadCharacter } from './characters.js';
 import { Recorder, Playback, mulberry32, newSeed, round, fingerprint } from './replay.js';
@@ -382,6 +383,7 @@ function restart(seed = urlSeed ?? newSeed()) {
     pickups.reset();
     spawnLevelZombies();
     director = new Director(directorStreet);
+    alarms.reset();
   });
   setSkeleton(params.showSkeleton);
   kills = 0;
@@ -484,7 +486,8 @@ function simStep(dt, input, cmds) {
     pickups.update(dt, player, takePickup);
     throwables.update(dt);
     kickBodies();
-    director.update(dt, directorWorld);
+    alarms.update(dt, player);
+    if (DIRECTOR_ON) director.update(dt, directorWorld);
   });
 }
 
@@ -540,6 +543,8 @@ function spawnLevelZombies() {
 spawnLevelZombies();
 
 // The AI Director paces the run: mobs out of sight, peaks, and breathers.
+// ?nodirector leaves the street to its own zombies (the smoke tests use it).
+const DIRECTOR_ON = !new URLSearchParams(location.search).has('nodirector');
 const directorStreet = { minZ: 2, maxZ: STREET_LENGTH - 3, edge: STREET_EDGE };
 let director = new Director(directorStreet);
 const directorWorld = {
@@ -560,6 +565,14 @@ const directorWorld = {
   },
 };
 let hordeBanner = null; // the warning on screen: { dir, t: seconds left }
+
+// Car alarms: shoot an armed car or climb on it and the whole street comes.
+const alarms = new CarAlarms(scene, level.props.car);
+alarms.onAlarm = (car) => {
+  for (const z of zombies) if (Math.hypot(z.pos.x - car.x, z.pos.z - car.z) < 60) z.alert();
+  director.panic(directorWorld);
+  shake = Math.max(shake, params.cameraShake * 2);
+};
 
 // N: an extra wave around the player (for testing, or for punishment).
 function spawnWave() {
@@ -617,6 +630,7 @@ player.onShot = (muzzle, dir, damage) => {
     }
   }
   effects.shot(muzzle, dir, distance, kind);
+  if (kind === 'wall') alarms.shotAt(muzzle.clone().addScaledVector(dir, distance), player.pos);
   sound.gunshot(muzzle, player.weapon.name === 'pistol');
   if (kind === 'wall') sound.wallHit(muzzle.clone().addScaledVector(dir, distance));
   if (target) {
@@ -988,7 +1002,7 @@ function updateUI(real) {
     if (hordeBanner.t <= 0 || player.state === 'dead') hordeBanner = null;
   }
   ui.horde.hidden = !hordeBanner;
-  if (hordeBanner) ui.horde.textContent = hordeBanner.dir > 0 ? '▲ HORDE · AHEAD' : '▼ HORDE · BEHIND';
+  if (hordeBanner) ui.horde.textContent = hordeBanner.dir === 0 ? '▲▼ HORDE · BOTH WAYS' : hordeBanner.dir > 0 ? '▲ HORDE · AHEAD' : '▼ HORDE · BEHIND';
   ui.struggle.hidden = !grapple.active;
   if (grapple.active) {
     ui.struggleFill.style.width = `${grapple.struggle * 100}%`;
@@ -1158,6 +1172,7 @@ function frame(timestamp) {
   if (!running) strugglePresses = 0;
   effects.update(dt);
   gore.update(dt);
+  alarms.animate(real, (car) => sound.carAlarm(car, alarms.lastBeat));
 
   updateCamera(real);
   updateUI(real);
@@ -1189,5 +1204,5 @@ if (import.meta.env.DEV) {
       gore.update(STEP);
     }
   };
-  /** @type {any} */ (window).__rigor = { renderer, scene, player, grapple, gore, params, zparams, level, nav, post, hurt: () => (hurtFlash = 1), watchReplay, get recorder() { return recorder; }, get playback() { return playback; }, worldFingerprint, pickups, sound, restart, startGame, advance, addZombie, get zombies() { return zombies; }, get director() { return director; } };
+  /** @type {any} */ (window).__rigor = { renderer, scene, player, grapple, gore, params, zparams, level, nav, post, hurt: () => (hurtFlash = 1), watchReplay, get recorder() { return recorder; }, get playback() { return playback; }, worldFingerprint, pickups, sound, restart, startGame, advance, addZombie, get zombies() { return zombies; }, get director() { return director; }, alarms };
 }

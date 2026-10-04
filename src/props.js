@@ -41,6 +41,7 @@ export function dressProps(level) {
               }
             });
             slot.standIns[0].parent.add(model);
+            /** @type {any} */ (slot).model = model; // (a car alarm flashes its lights)
             for (const s of slot.standIns) s.visible = false;
           }
         })
