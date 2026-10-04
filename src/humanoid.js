@@ -17,8 +17,31 @@ import {
   bendFront,
 } from './rig-utils.js';
 import { Traversal } from './traversal.js';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 const { clamp, lerp } = THREE.MathUtils;
+
+// Dressed bodies, merged (Humanoid.dress): per model, kind and bulk, the
+// geometry of every part wearing one material in one region, each vertex
+// tied to its slot. Shared by every body built alike.
+/** @type {Map<string, Map<string, { source: string, region: string, geometry: THREE.BufferGeometry }>>} */
+const mergedBodies = new Map();
+
+// A dressed body: its slots are the bones, each part tied rigidly to one.
+// Bounds follow the bones (a torn-off arm on the road included), not the
+// bind pose, so the body is culled where it actually is.
+class BodyMesh extends THREE.SkinnedMesh {
+  updateMatrixWorld(force) {
+    super.updateMatrixWorld(force);
+    const sphere = (this.boundingSphere ??= new THREE.Sphere());
+    const box = _bounds.makeEmpty();
+    for (const bone of this.skeleton.bones) box.expandByPoint(_joint.setFromMatrixPosition(bone.matrixWorld));
+    box.getBoundingSphere(sphere);
+    sphere.radius += 0.45; // the parts reach past their joints
+  }
+}
+const _bounds = new THREE.Box3();
+const _joint = new THREE.Vector3();
 
 const _v1 = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
@@ -209,7 +232,7 @@ export class Humanoid {
 
     // Bulk widens the torso and thickens the limbs (a brute); the skeleton's
     // lengths stay the same, only the shoulders and hips spread to match.
-    const k = look.bulk ?? 1;
+    const k = (this.bulk = look.bulk ?? 1);
     this.dims = { shoulderX: DIMS.shoulderX * (1 + (k - 1) * 0.8), hipX: DIMS.hipX * (1 + (k - 1) * 0.6) };
 
     this.pelvis = new THREE.Group();
@@ -299,7 +322,7 @@ export class Humanoid {
     const kids = (g) => g.children.filter((c) => /** @type {any} */ (c).isMesh);
     // `thick` widens a part by the body's bulk, as the primitives are.
     const across = { x: k, y: 1, z: k };
-    /** @type {Array<{ at: THREE.Object3D, part: string, standIns: THREE.Object3D[], thick?: { x: number, y: number, z: number }, mirror?: boolean }>} */
+    /** @type {Array<{ at: THREE.Object3D, part: string, standIns: THREE.Object3D[], thick?: { x: number, y: number, z: number }, mirror?: boolean, region?: string }>} */
     this.slots = [
       { at: this.pelvis, part: 'pelvis', standIns: kids(this.pelvis), thick: across },
       { at: this.chest, part: 'chest', standIns: kids(this.chest), thick: across },
@@ -313,8 +336,9 @@ export class Humanoid {
         { at: a.hand, part: 'hand', standIns: kids(a.hand), mirror: a.side < 0 },
       ]),
       ...this.legs.flatMap((l) => [
-        { at: l.thigh.mesh, part: 'thigh', standIns: [l.thigh.capsule], thick: across },
-        { at: l.shin.mesh, part: 'shin', standIns: [l.shin.capsule], thick: across },
+        // A leg is its own region: a shot leg soaks with blood alone (repaint).
+        { at: l.thigh.mesh, part: 'thigh', standIns: [l.thigh.capsule], thick: across, region: `leg${l.side}` },
+        { at: l.shin.mesh, part: 'shin', standIns: [l.shin.capsule], thick: across, region: `leg${l.side}` },
         { at: l.foot, part: 'foot', standIns: kids(l.foot) },
         { at: l.toe, part: 'toe', standIns: kids(l.toe) },
       ]),
@@ -363,37 +387,115 @@ export class Humanoid {
     if (this.dressed) return;
     this.dressed = true;
     const own = ['skin', 'shirt', 'pants', 'shoes', 'cap'];
-    const materialFor = (src) => {
-      const key = src.name.toLowerCase();
+    const materialFor = (name) => {
+      const key = name.toLowerCase();
       if (own.includes(key)) return this.materials[key] ?? null;
-      this.materials[key] ??= src.clone();
+      this.materials[key] ??= /** @type {THREE.Material} */ (this._sourceMaterials(model).get(name)).clone();
       return this.materials[key];
     };
-    for (const slot of this.slots) {
-      const part = (kind && model.getObjectByName(`${kind}_${slot.part}`)) || model.getObjectByName(slot.part);
-      if (!part) continue;
+    // One skinned mesh per material and region, not a mesh per part: a body
+    // draws in a handful of calls, so a horde can be on screen at once.
+    const identity = new THREE.Matrix4();
+    const skeleton = new THREE.Skeleton(
+      /** @type {THREE.Bone[]} */ (/** @type {unknown} */ (this.slots.map((s) => s.at))),
+      this.slots.map(() => identity.clone()),
+    );
+    this.bodyMeshes = [];
+    for (const { source, region, geometry } of this._mergedBody(model, kind).values()) {
+      const material = materialFor(source);
+      if (!material) continue; // a look without it (a bald zombie: no Cap)
+      const mesh = new BodyMesh(geometry, material);
+      mesh.userData.region = region;
+      mesh.castShadow = true;
+      mesh.bind(skeleton, identity);
+      this.body.add(mesh);
+      this.bodyMeshes.push(mesh);
+    }
+    this.skeleton = skeleton;
+    for (const slot of this.slots) if (this._partFor(model, kind, slot)) for (const s of slot.standIns) s.visible = false;
+  }
+
+  _partFor(model, kind, slot) {
+    return (kind && model.getObjectByName(`${kind}_${slot.part}`)) || model.getObjectByName(slot.part);
+  }
+
+  _sourceMaterials(model) {
+    if (!model.userData.materials) {
+      const found = new Map();
+      model.traverse((o) => {
+        const mesh = /** @type {THREE.Mesh} */ (o);
+        if (mesh.isMesh) found.set(/** @type {THREE.Material} */ (mesh.material).name, mesh.material);
+      });
+      model.userData.materials = found;
+    }
+    return model.userData.materials;
+  }
+
+  // Every part, in its slot's frame (bulk and mirroring baked in), grouped
+  // by material and region and tied to its slot as a bone.
+  _mergedBody(model, kind) {
+    const key = `${model.uuid}|${kind ?? ''}|${this.bulk}`;
+    let groups = mergedBodies.get(key);
+    if (groups) return groups;
+    /** @type {Map<string, { source: string, region: string, parts: THREE.BufferGeometry[] }>} */
+    const pending = new Map();
+    this.slots.forEach((slot, bone) => {
+      const part = this._partFor(model, kind, slot);
+      if (!part) return;
       const copy = part.clone(true);
       copy.position.set(0, 0, 0);
       copy.quaternion.identity();
+      copy.scale.set(1, 1, 1);
       if (slot.thick) copy.scale.set(slot.thick.x, slot.thick.y, slot.thick.z);
       if (slot.mirror) copy.scale.x *= -1; // a left hand from the right one
+      copy.updateMatrixWorld(true); // relative to the slot: the copy has no parent
       copy.traverse((o) => {
-        if (!(/** @type {any} */ (o).isMesh)) return;
         const mesh = /** @type {THREE.Mesh} */ (o);
-        const material = materialFor(mesh.material);
-        if (material) mesh.material = material;
-        else mesh.visible = false;
-        mesh.castShadow = true;
+        if (!mesh.isMesh) return;
+        const g = new THREE.BufferGeometry();
+        g.setAttribute('position', mesh.geometry.getAttribute('position').clone());
+        g.setAttribute('normal', mesh.geometry.getAttribute('normal').clone());
+        const index = /** @type {THREE.BufferAttribute} */ (mesh.geometry.getIndex()).clone();
+        g.setIndex(index);
+        g.applyMatrix4(mesh.matrixWorld);
+        // Mirrored, the triangles turn inside out: wind them back.
+        if (mesh.matrixWorld.determinant() < 0) {
+          const a = index.array;
+          for (let i = 0; i < a.length; i += 3) [a[i + 1], a[i + 2]] = [a[i + 2], a[i + 1]];
+        }
+        const n = g.getAttribute('position').count;
+        const bones = new Uint16Array(n * 4);
+        const weights = new Float32Array(n * 4);
+        for (let i = 0; i < n; i++) {
+          bones[i * 4] = bone;
+          weights[i * 4] = 1;
+        }
+        g.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(bones, 4));
+        g.setAttribute('skinWeight', new THREE.Float32BufferAttribute(weights, 4));
+        const source = /** @type {THREE.Material} */ (mesh.material).name;
+        // Only trousers soak a leg at a time; anything else stays one piece.
+        const region = (source.toLowerCase() === 'pants' && slot.region) || 'body';
+        const id = `${source}|${region}`;
+        if (!pending.has(id)) pending.set(id, { source, region, parts: [] });
+        pending.get(id).parts.push(g);
       });
-      slot.at.add(copy);
-      for (const s of slot.standIns) s.visible = false;
+    });
+    groups = new Map();
+    for (const [id, { source, region, parts }] of pending) {
+      groups.set(id, { source, region, geometry: mergeGeometries(parts) });
+      for (const g of parts) g.dispose();
     }
+    mergedBodies.set(key, groups);
+    return groups;
   }
 
-  // Swap one of this body's materials for another on every part that wears
-  // it (blood soaking into the trousers).
+  // Swap one of this body's materials for another on every part under
+  // `root` that wears it (blood soaking into the trousers). Dressed, a part
+  // is its slot's region of the body.
   repaint(root, kind, material) {
     const from = this.materials[kind];
+    const region = this.slots.find((s) => s.at === root)?.region ?? 'body';
+    for (const mesh of this.bodyMeshes ?? []) if (mesh.userData.region === region && mesh.material === from) mesh.material = material;
     root.traverse((o) => {
       const mesh = /** @type {THREE.Mesh} */ (o);
       if (mesh.isMesh && mesh.material === from) mesh.material = material;
@@ -412,6 +514,7 @@ export class Humanoid {
 
   dispose() {
     this.scene.remove(this.body);
+    this.skeleton?.dispose(); // (the merged geometry is shared, and kept)
     for (const m of this.markers) this.scene.remove(m);
   }
 
