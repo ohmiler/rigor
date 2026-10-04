@@ -12,6 +12,7 @@ import { MELEE } from './weapons.js';
 import { buildStreet, collideCircle, insideCollider, heightAt, findLedge, solidAt, STREET_LENGTH, STREET_EDGE } from './level.js';
 import { NavGrid } from './nav.js';
 import { Post } from './post.js';
+import { Director } from './director.js';
 import { dressProps } from './props.js';
 import { loadCharacter } from './characters.js';
 import { Recorder, Playback, mulberry32, newSeed, round, fingerprint } from './replay.js';
@@ -380,6 +381,7 @@ function restart(seed = urlSeed ?? newSeed()) {
     player.reset(level.start);
     pickups.reset();
     spawnLevelZombies();
+    director = new Director(directorStreet);
   });
   setSkeleton(params.showSkeleton);
   kills = 0;
@@ -481,6 +483,7 @@ function simStep(dt, input, cmds) {
     pickups.update(dt, player, takePickup);
     throwables.update(dt);
     kickBodies();
+    director.update(dt, directorWorld);
   });
 }
 
@@ -516,6 +519,7 @@ function addZombie(x, z, type = 'walker') {
   zombie.onLand = (impact) => sound.land(zombie.pos, impact);
   zombie.voice = { state: zombie.state, dead: false, next: Math.random() * 6 };
   zombies.push(zombie);
+  return zombie;
 }
 
 // The street's own population, jittered so no two runs are the same.
@@ -533,6 +537,19 @@ function spawnLevelZombies() {
   }
 }
 spawnLevelZombies();
+
+// The AI Director paces the run: mobs out of sight, peaks, and breathers.
+const directorStreet = { minZ: 2, maxZ: STREET_LENGTH - 3, edge: STREET_EDGE };
+let director = new Director(directorStreet);
+const directorWorld = {
+  player,
+  get zombies() {
+    return zombies;
+  },
+  spawn: (x, z, type) => addZombie(x, z, type),
+  isFree: (x, z) => !insideCollider(level, x, z, 0.4) && nav.isFree(x, z),
+  pickType,
+};
 
 // N: an extra wave around the player (for testing, or for punishment).
 function spawnWave() {
@@ -1136,7 +1153,9 @@ function frame(timestamp) {
     const alive = zombies.filter((z) => !z.dead);
     const chasing = alive.filter((z) => z.state === 'chase').length;
     stats.textContent =
-      `${player.getDebug()}\n` + `zombies ${alive.length} alive · ${chasing} chasing · kills ${kills}`;
+      `${player.getDebug()}\n` +
+      `zombies ${alive.length} alive · ${chasing} chasing · kills ${kills}\n` +
+      `director ${director.phase} ${director.phaseTime.toFixed(0)} s · intensity ${director.intensity.toFixed(2)} · mobs ${director.mobs}`;
   }
 
   if (params.postFX) post.render();
@@ -1153,5 +1172,5 @@ if (import.meta.env.DEV) {
       gore.update(STEP);
     }
   };
-  /** @type {any} */ (window).__rigor = { renderer, scene, player, grapple, gore, params, zparams, level, nav, post, hurt: () => (hurtFlash = 1), watchReplay, get recorder() { return recorder; }, get playback() { return playback; }, worldFingerprint, pickups, sound, restart, startGame, advance, addZombie, get zombies() { return zombies; } };
+  /** @type {any} */ (window).__rigor = { renderer, scene, player, grapple, gore, params, zparams, level, nav, post, hurt: () => (hurtFlash = 1), watchReplay, get recorder() { return recorder; }, get playback() { return playback; }, worldFingerprint, pickups, sound, restart, startGame, advance, addZombie, get zombies() { return zombies; }, get director() { return director; } };
 }
