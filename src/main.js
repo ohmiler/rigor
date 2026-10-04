@@ -389,6 +389,7 @@ function restart(seed = urlSeed ?? newSeed()) {
   escaped = false;
   deathSlow = 0;
   hurtFlash = 0;
+  hordeBanner = null;
   acc = 0;
   pending = [];
   document.getElementById('dead').hidden = true;
@@ -546,10 +547,19 @@ const directorWorld = {
   get zombies() {
     return zombies;
   },
-  spawn: (x, z, type) => addZombie(x, z, type),
+  spawn: (x, z, type, horde) => {
+    const zombie = addZombie(x, z, type);
+    if (horde) zombie.quirk.climbDelay *= 0.3; // frantic: up on the car after you in no time
+    return zombie;
+  },
   isFree: (x, z) => !insideCollider(level, x, z, 0.4) && nav.isFree(x, z),
   pickType,
+  onHorde: (dir) => {
+    sound.horde(dir);
+    hordeBanner = { dir, t: director.t.hordeWarn + 2.5 };
+  },
 };
+let hordeBanner = null; // the warning on screen: { dir, t: seconds left }
 
 // N: an extra wave around the player (for testing, or for punishment).
 function spawnWave() {
@@ -912,6 +922,7 @@ window.addEventListener('resize', () => {
 const stats = document.getElementById('stats');
 const ui = {
   health: document.getElementById('health-fill'),
+  horde: document.getElementById('horde'),
   hurt: document.getElementById('hurt'),
   struggle: document.getElementById('struggle'),
   struggleFill: document.getElementById('struggle-fill'),
@@ -972,6 +983,12 @@ function updateUI(real) {
     vignette: params.vignette,
     grain: params.grain,
   });
+  if (hordeBanner) {
+    hordeBanner.t -= real;
+    if (hordeBanner.t <= 0 || player.state === 'dead') hordeBanner = null;
+  }
+  ui.horde.hidden = !hordeBanner;
+  if (hordeBanner) ui.horde.textContent = hordeBanner.dir > 0 ? '▲ HORDE · AHEAD' : '▼ HORDE · BEHIND';
   ui.struggle.hidden = !grapple.active;
   if (grapple.active) {
     ui.struggleFill.style.width = `${grapple.struggle * 100}%`;

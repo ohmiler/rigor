@@ -9,12 +9,13 @@ const STREET = { minZ: 2, maxZ: 113, edge: 6.5 };
 // A run of the Director alone, under one seed: a player walking up the
 // street at `speed`, zombies that are just positions, and `hurt(t)` saying
 // how much health the player loses on each step (a fight, without one).
-function night(seed, { secs = 300, speed = 0.4, hurt = () => 0, isFree = () => true } = {}) {
+function night(seed, { secs = 300, speed = 0.4, hurt = () => 0, isFree = () => true, tuning = {} } = {}) {
   const real = Math.random;
   Math.random = mulberry32(seed);
   try {
-    const director = new Director(STREET);
+    const director = new Director(STREET, tuning);
     const player = { pos: new THREE.Vector3(0, 0, 3), health: 100, state: 'normal' };
+    const warnings = [];
     const zombies = [];
     const spawns = [];
     const phases = [];
@@ -23,12 +24,13 @@ function night(seed, { secs = 300, speed = 0.4, hurt = () => 0, isFree = () => t
       zombies,
       isFree,
       pickType: () => 'walker',
-      spawn(x, z, type) {
+      spawn(x, z, type, horde = false) {
         const zombie = { pos: new THREE.Vector3(x, 0, z), dead: false, state: 'wander', type };
         zombies.push(zombie);
-        spawns.push({ t: phases.length * STEP, x, z, playerZ: player.pos.z, phase: director.phase });
+        spawns.push({ t: phases.length * STEP, x, z, type, horde, playerZ: player.pos.z, phase: director.phase });
         return zombie;
       },
+      onHorde: (dir) => warnings.push({ t: phases.length * STEP, dir }),
     };
     for (let s = 0; s * STEP < secs; s++) {
       const t = s * STEP;
@@ -38,7 +40,7 @@ function night(seed, { secs = 300, speed = 0.4, hurt = () => 0, isFree = () => t
       director.update(STEP, ctx);
       phases.push(director.phase);
     }
-    return { director, spawns, phases };
+    return { director, spawns, phases, warnings };
   } finally {
     Math.random = real;
   }
@@ -126,27 +128,57 @@ describe('the AI Director', () => {
     expect(s.filter(([p, from]) => p === 'relax' && from > 0).length).toBeGreaterThan(0);
   });
 
+  it('a horde: a warning first, then twenty to forty, out of sight and all from one way', () => {
+    for (const seed of [1, 2, 3, 4, 5]) {
+      const { spawns, warnings } = night(seed, { secs: 240 });
+      expect(warnings.length).toBeGreaterThan(0);
+      const w = warnings[0];
+      const horde = spawns.filter((sp) => sp.horde && sp.t >= w.t && sp.t < w.t + DIRECTOR.hordeWarn + 2);
+      expect(horde.length).toBeGreaterThanOrEqual(15); // a few may land where they'd be seen
+      expect(horde.length).toBeLessThanOrEqual(45);
+      // Nothing of it comes before the warning has had its time.
+      expect(Math.min(...horde.map((sp) => sp.t)) - w.t).toBeGreaterThanOrEqual(DIRECTOR.hordeWarn - 2 * STEP);
+      expect(horde.filter((sp) => sp.type === 'runner').length / horde.length).toBeGreaterThan(0.6);
+      const sides = new Set(horde.map((sp) => Math.sign(sp.z - sp.playerZ)));
+      expect(sides.size).toBe(1);
+      for (const sp of horde) expect(inView({ x: 0, z: sp.playerZ }, sp.x, sp.z)).toBe(false);
+    }
+  });
+
+  it('a horde lands in the build-up, never on a breather', () => {
+    for (const seed of [6, 7, 8]) {
+      const { spawns } = night(seed, { secs: 400 });
+      const horde = spawns.filter((sp) => sp.horde);
+      expect(horde.length).toBeGreaterThan(0);
+      for (const sp of horde) expect(sp.phase).toBe('build');
+    }
+  });
+
   it('the same seed gives the same night; another seed, another', () => {
     const a = night(11).spawns;
     expect(night(11).spawns).toEqual(a);
     expect(night(12).spawns).not.toEqual(a);
   });
 
-  it('a fight with its mobs plays the same twice (replays stay exact)', () => {
+  it('a fight with its mobs and a horde plays the same twice (replays stay exact)', () => {
     const fightPrints = (seed) => {
       const real = Math.random;
       Math.random = mulberry32(seed);
       try {
         const w = makeWorld();
         w.navigate({ minX: -7, maxX: 7, minZ: -2, maxZ: 60 });
-        // Short calm and quick mobs, so they arrive within the test.
-        const director = new Director({ minZ: 2, maxZ: 58, edge: 6.5 }, { startCalm: 1, mobEvery: [2, 3] });
+        // Short calm, quick mobs and an early horde, so they arrive within the test.
+        const director = new Director({ minZ: 2, maxZ: 58, edge: 6.5 }, { startCalm: 1, mobEvery: [2, 3], hordeFirst: [1, 1], hordeWarn: 1, hordeSize: [20, 20] });
         const ctx = {
           player: w.player,
           zombies: w.zombies,
           isFree: () => true,
           pickType: () => 'walker',
-          spawn: (x, z, type) => w.addZombie(x, z, type),
+          spawn: (x, z, type, horde) => {
+            const zombie = w.addZombie(x, z, type);
+            if (horde) zombie.quirk.climbDelay *= 0.3;
+            return zombie;
+          },
         };
         const prints = [];
         const aim = new THREE.Vector3(0, 1.3, 30);
@@ -162,7 +194,7 @@ describe('the AI Director', () => {
       }
     };
     const a = fightPrints(21);
-    expect(a.zombies).toBeGreaterThan(3); // mobs did come
+    expect(a.zombies).toBeGreaterThan(20); // mobs and a horde did come
     expect(fightPrints(21).prints).toEqual(a.prints);
   });
 });

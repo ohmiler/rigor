@@ -156,6 +156,28 @@ canvas {
   pointer-events: none;
 }
 
+/* A horde on its way: which way to face. */
+#horde {
+  position: fixed;
+  top: 76px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 15px;
+  font-weight: 800;
+  letter-spacing: 0.22em;
+  color: #ff5a4f;
+  text-shadow: 0 0 12px rgba(255, 40, 30, 0.55), 0 1px 3px rgba(0, 0, 0, 0.8);
+  pointer-events: none;
+  animation: horde-pulse 0.7s ease-in-out infinite alternate;
+}
+#horde[hidden] {
+  display: none;
+}
+@keyframes horde-pulse {
+  from { opacity: 0.55; }
+  to { opacity: 1; }
+}
+
 #parkour {
   position: fixed;
   bottom: 30%;

@@ -126,9 +126,9 @@ export class Sound {
 
   // A rough voice: a buzzing source (sawtooth with a wobble, plus breath)
   // shaped by two formant filters into an "ooh" or an "aah".
-  _voice(dest, { dur, f0, f0End, formants, gain, rasp = 0.3, vibrato = 4, attack = 0.08 }) {
+  _voice(dest, { at = 0, dur, f0, f0End, formants, gain, rasp = 0.3, vibrato = 4, attack = 0.08 }) {
     const ctx = this.ctx;
-    const t = ctx.currentTime;
+    const t = ctx.currentTime + at;
     const osc = ctx.createOscillator();
     osc.type = 'sawtooth';
     osc.frequency.setValueAtTime(f0, t);
@@ -440,6 +440,37 @@ export class Sound {
     const o = this._out(null, 0, 0.4);
     if (!o) return;
     [523, 659, 784, 1047].forEach((f, i) => this._tone(o, { at: i * 0.12, dur: 0.9, type: 'triangle', freq: f, gain: 0.35, attack: 0.02 }));
+  }
+
+  // A horde on its way (`dir` 1: up the street, -1: behind): a swell of
+  // distant howls, muffled by the buildings between, over the drumming of
+  // a crowd running. Rises for the few seconds before they come.
+  horde(dir) {
+    const o = this._out(null, 0, 0.7);
+    if (!o) return;
+    const far = this.ctx.createBiquadFilter();
+    far.type = 'lowpass';
+    far.frequency.value = dir > 0 ? 1800 : 1300; // behind sounds further off, and wrong
+    far.connect(o);
+    for (let i = 0; i < 16; i++) {
+      const at = Math.pow(i / 16, 0.7) * 4.2 + rand(0, 0.3); // more and more of them
+      const f0 = rand(210, 320);
+      this._voice(far, {
+        at,
+        dur: rand(0.9, 1.6),
+        f0,
+        f0End: f0 * rand(0.55, 0.75),
+        formants: [[rand(800, 1100), 3, 1], [rand(1400, 1800), 4, 0.6]],
+        gain: 0.2 + (at / 4.5) * 0.45,
+        rasp: 0.9,
+        vibrato: rand(5, 9),
+        attack: 0.05,
+      });
+    }
+    // Feet: low thuds, faster and louder as they close.
+    for (let t = 0.6; t < 5.2; t += 0.22 - t * 0.025) {
+      this._noise(far, { at: t + rand(-0.03, 0.03), dur: 0.12, freq: 140, gain: 0.15 + t * 0.12 });
+    }
   }
 
   died() {

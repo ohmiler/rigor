@@ -2,7 +2,9 @@
 // player is having it (intensity: bites, blows, being held, things clawing
 // close, kills at arm's length) and runs a loop on it, as Left 4 Dead does:
 //
-//   build  mobs keep coming, sooner when it's been quiet too long,
+//   build  mobs keep coming, sooner when it's been quiet too long, and
+//          now and then a horde: a howl down the street, then dozens of
+//          runners all at once from one way,
 //   peak   intensity tops out: nothing new for a few seconds,
 //   relax  nothing at all until the player has caught their breath,
 //
@@ -37,6 +39,13 @@ export const DIRECTOR = {
   behind: [VIEW.behind + 1, VIEW.behind + 8],
   aheadShare: 0.7,
   despawnBehind: 30, // well behind and out of sight: gone, to make room
+  // Hordes: counted in seconds of build-up, so one never lands on a breather.
+  hordeFirst: [40, 70],
+  hordeEvery: [80, 120],
+  hordeWarn: 5, // seconds of warning (the howl) before they come
+  hordeSize: [20, 40], // the street's start to its end (and a few either way)
+  hordeAhead: 0.6, // from up the street; the rest come from behind
+  hordeRunners: 0.85,
   // Intensity
   hurt: 1 / 60, // per point of health lost
   held: 0.25, // per second in a zombie's grip
@@ -76,6 +85,15 @@ export class Director {
     this.queue = []; // zombies waiting to be spawned, one a step (no hitch)
     this.seenDead = new WeakSet();
     this.mobs = 0;
+    this.hordeTimer = roll(this.t.hordeFirst);
+    // The horde on its way: { dir: 1 ahead | -1 behind, warn: seconds left, queue }.
+    this.horde = null;
+    this.hordes = 0;
+  }
+
+  /** Seconds until a horde arrives (0 when none is coming) and which way. */
+  get hordeWarning() {
+    return this.horde ? { secs: Math.max(this.horde.warn, 0), dir: this.horde.dir } : null;
   }
 
   /**
@@ -84,9 +102,10 @@ export class Director {
    * @param {{
    *   player: { pos: { x: number, z: number }, health: number, state: string },
    *   zombies: Array<{ pos: { x: number, z: number, distanceTo?: Function }, dead: boolean, state: string, removed?: boolean, dispose?: () => void }>,
-   *   spawn: (x: number, z: number, type: string) => any,
+   *   spawn: (x: number, z: number, type: string, horde?: boolean) => any,
    *   isFree: (x: number, z: number) => boolean,
    *   pickType: (along: number) => string,
+   *   onHorde?: (dir: number) => void,
    * }} ctx
    */
   update(dt, ctx) {
@@ -94,6 +113,7 @@ export class Director {
     if (player.state === 'dead' || player.state === 'escaped') return;
     this._measure(dt, ctx);
     this._pace(dt, ctx);
+    this._updateHorde(dt, ctx);
     this._spawnQueued(ctx);
     this._despawn(ctx);
   }
@@ -136,7 +156,16 @@ export class Director {
     const t = this.t;
     this.phaseTime += dt;
     if (this.phase === 'build') {
+      // A horde on its way is the build-up now: all of it lands before the peak.
+      if (this.horde) return;
       if (this.intensity >= t.peak || this.phaseTime > t.buildMax) return this._enter('peak');
+      this.hordeTimer -= dt;
+      if (this.hordeTimer <= 0) {
+        this.hordeTimer = roll(t.hordeEvery);
+        this.horde = { dir: Math.random() < t.hordeAhead ? 1 : -1, warn: t.hordeWarn, queue: [] };
+        ctx.onHorde?.(this.horde.dir);
+        return;
+      }
       this.mobTimer -= dt * (this.quietTime > t.quietAfter ? 2 : 1);
       if (this.mobTimer <= 0) {
         this.mobTimer = roll(t.mobEvery);
@@ -184,12 +213,45 @@ export class Director {
     this.mobs++;
   }
 
-  /** A free spot out of sight, ahead of the player mostly; null if none. */
-  spawnPoint(playerPos, isFree) {
+  // The howl, then the horde: fanned across the street, all from one way,
+  // coming one a step. Once warned it comes, peak or not.
+  _updateHorde(dt, { player, zombies, isFree, pickType }) {
+    const h = this.horde;
+    if (!h) return;
+    const t = this.t;
+    if (h.warn > 0) {
+      h.warn -= dt;
+      if (h.warn > 0) return;
+      const along = Math.min(Math.max(player.pos.z / this.street.maxZ, 0), 1);
+      const [lo, hi] = t.hordeSize;
+      const room = t.aliveMax - zombies.filter((z) => !z.dead).length;
+      const size = Math.min(Math.round(lo + (hi - lo) * along + (Math.random() - 0.5) * 6), room);
+      let at = this.spawnPoint(player.pos, isFree, h.dir);
+      // Nowhere that way (the end of the street): the other way, then.
+      if (!at) at = this.spawnPoint(player.pos, isFree, -h.dir);
+      for (let i = 0; at && i < size; i++) {
+        for (let tries = 0; tries < 8; tries++) {
+          const x = (Math.random() * 2 - 1) * (this.street.edge - 0.5);
+          const z = at.z + (Math.random() - 0.5) * 8;
+          if (!isFree(x, z) || inView(player.pos, x, z) || z < this.street.minZ || z > this.street.maxZ) continue;
+          h.queue.push({ x, z, type: Math.random() < t.hordeRunners ? 'runner' : pickType(z), horde: true });
+          break;
+        }
+      }
+      this.hordes++;
+    }
+    if (!h.queue.length) this.horde = null;
+  }
+
+  /**
+   * A free spot out of sight, ahead of the player mostly (or `dir`: 1 ahead,
+   * -1 behind); null if none.
+   */
+  spawnPoint(playerPos, isFree, dir = 0) {
     const t = this.t;
     const { minZ, maxZ, edge } = this.street;
     for (let tries = 0; tries < 30; tries++) {
-      const ahead = Math.random() < t.aheadShare;
+      const ahead = dir ? dir > 0 : Math.random() < t.aheadShare;
       const z = ahead ? playerPos.z + roll(t.ahead) : playerPos.z - roll(t.behind);
       if (z < minZ || z > maxZ) continue;
       const x = (Math.random() * 2 - 1) * (edge - 0.5);
@@ -198,12 +260,14 @@ export class Director {
     return null;
   }
 
-  // One a step. Seen by now (the player came on fast)? It doesn't appear.
+  // One a step (a horde has its own line). Seen by now (the player came on
+  // fast)? It doesn't appear.
   _spawnQueued({ player, spawn }) {
-    const s = this.queue.shift();
-    if (!s || inView(player.pos, s.x, s.z)) return;
-    const z = spawn(s.x, s.z, s.type);
-    z.state = 'chase'; // it knows where you are
+    for (const s of [this.queue.shift(), this.horde?.warn <= 0 ? this.horde.queue.shift() : null]) {
+      if (!s || inView(player.pos, s.x, s.z)) continue;
+      const z = spawn(s.x, s.z, s.type, !!s.horde);
+      z.state = 'chase'; // it knows where you are
+    }
   }
 
   // Stragglers left far behind, out of sight, go: room for what's ahead.
