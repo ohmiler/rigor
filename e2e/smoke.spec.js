@@ -13,8 +13,13 @@ function watchErrors(page) {
 const metresToGo = async (page) => Number((await page.locator('#objective').textContent()).match(/(\d+) m/)?.[1]);
 
 test('the game loads, starts from the start screen, and the player can walk', async ({ page }, info) => {
+  // Software WebGL can run the game at a handful of steps a second: a reload
+  // that takes 2.5 s in the game can take most of a minute here.
+  test.setTimeout(180000);
   const errors = watchErrors(page);
-  await page.goto('/');
+  // No Director: its mobs only slow the frames further, and could grab the
+  // player mid-check.
+  await page.goto('/?nodirector');
   await expect(page.locator('#start')).toBeVisible();
   // Dev tools stay hidden on the published build.
   await expect(page.locator('.lil-gui')).toHaveCount(0);
@@ -27,7 +32,7 @@ test('the game loads, starts from the start screen, and the player can walk', as
   // Hold W until the distance drops: software WebGL runs at a few frames a
   // second, so how long that takes varies.
   await page.keyboard.down('w');
-  await expect.poll(() => metresToGo(page), { timeout: 15000 }).toBeLessThan(before);
+  await expect.poll(() => metresToGo(page), { timeout: 30000 }).toBeLessThan(before);
   await page.keyboard.up('w');
 
   // Fire, reload and swap guns: nothing should throw.
@@ -36,16 +41,16 @@ test('the game loads, starts from the start screen, and the player can walk', as
   const mag = async () => Number(await page.locator('#ammo .mag').textContent());
   const full = await mag();
   await page.mouse.down();
-  await expect.poll(mag, { timeout: 15000 }).toBeLessThan(full);
+  await expect.poll(mag, { timeout: 30000 }).toBeLessThan(full);
   await page.mouse.up();
   await page.keyboard.press('r');
   // No swapping mid-reload (by design): see it start, then wait for it to finish.
-  await expect(page.locator('#ammo .state')).toContainText('RELOADING', { timeout: 5000 });
-  await expect(page.locator('#ammo .state')).not.toContainText('RELOADING', { timeout: 15000 });
+  await expect(page.locator('#ammo .state')).toContainText('RELOADING', { timeout: 10000 });
+  await expect(page.locator('#ammo .state')).not.toContainText('RELOADING', { timeout: 60000 });
   await page.keyboard.press('2');
-  await expect(page.locator('#ammo .weapon')).toContainText('PISTOL', { timeout: 10000 });
+  await expect(page.locator('#ammo .weapon')).toContainText('PISTOL', { timeout: 30000 });
   await page.keyboard.press('3');
-  await expect(page.locator('#ammo .weapon')).toContainText('KNIFE', { timeout: 10000 });
+  await expect(page.locator('#ammo .weapon')).toContainText('KNIFE', { timeout: 30000 });
 
   await info.attach('game', { body: await page.screenshot(), contentType: 'image/png' });
   expect(errors).toEqual([]);

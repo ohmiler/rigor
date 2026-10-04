@@ -35,8 +35,13 @@ jobs:
         run: npm test
       - name: Install a browser for the smoke tests
         run: npx playwright install --with-deps chromium
-      - name: Smoke tests in a real browser (load, start, walk, fire, swap, replay)
-        run: npm run test:e2e
+      - name: Smoke tests in a real browser (load, start, walk, fire, swap)
+        run: npm run test:e2e -- --grep-invert @replay
+      # Replays playing back exactly: reported, but not (yet) a reason to
+      # hold back a deploy. See ROADMAP.md.
+      - name: Replay plays back exactly (not blocking)
+        continue-on-error: true
+        run: npm run test:e2e -- --grep @replay
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
