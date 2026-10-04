@@ -21,7 +21,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from kit import reset, material, box, loft, prism, join, export  # noqa: E402
+from kit import reset, material, box, loft, prism, join, export, glyph  # noqa: E402
 
 SHOP_H, FLOOR_H, BAY = 3.6, 3.0, 3.0
 
@@ -192,69 +192,6 @@ def build_street():
 #
 # More recoloured materials: "Shutter" (per building), "Neon" and "Glyph"
 # (per sign; they glow, and the game lights them only at night).
-
-def glyph(rnd, cx, cy, size, face_x, mat, thick=0.025, along='z'):
-    """One made-up character in a `size` square centred on (cx, cy) of a
-    sign face. The face is the plane x = face_x (a blade sign, the
-    character's across running along z) or z = face_x (a flat sign, along
-    x). Built like a Chinese character: one part, or two side by side or
-    stacked, each a boxed part (口), a lattice of strokes, or a cross with
-    sweeping diagonals (木, 人)."""
-    w = 0.075  # stroke width, as a share of the square
-    strokes = []  # (u, v, du, dv, angle) in the unit square, centred
-
-    def bar(u, v, du, dv, angle=0.0):
-        strokes.append((u, v, du, dv, angle))
-
-    def part(u0, u1, v0, v1):
-        uc, vc, uw, vh = (u0 + u1) / 2, (v0 + v1) / 2, u1 - u0, v1 - v0
-        kind = rnd.random()
-        if kind < 0.3:  # a box, maybe split inside
-            i = 0.1
-            bar(uc, v1 - vh * i, uw * (1 - 2 * i), w)
-            bar(uc, v0 + vh * i, uw * (1 - 2 * i), w)
-            bar(u0 + uw * i, vc, w, vh * (1 - 2 * i))
-            bar(u1 - uw * i, vc, w, vh * (1 - 2 * i))
-            if rnd.random() < 0.6:
-                bar(uc, vc, uw * (1 - 2 * i), w)
-        elif kind < 0.75:  # a lattice: rows across, one or two strokes down
-            rows = rnd.randint(2, 4)
-            for k in range(rows):
-                length = uw * rnd.uniform(0.55, 0.95)
-                bar(uc + rnd.uniform(-0.1, 0.1) * uw, v0 + vh * (k + 0.5) / rows, length, w)
-            for _ in range(rnd.randint(1, 2)):
-                h = vh * rnd.uniform(0.6, 1.0)
-                bar(uc + rnd.uniform(-0.3, 0.3) * uw, vc + rnd.uniform(-0.1, 0.1) * vh, w, h)
-        else:  # a cross with two sweeps down from the middle
-            bar(uc, vc + vh * 0.2, uw * 0.85, w)
-            bar(uc, vc, w, vh * 0.9)
-            d = min(uw, vh) * 0.5
-            bar(uc - uw * 0.2, vc - vh * 0.22, w, d, 0.7)
-            bar(uc + uw * 0.2, vc - vh * 0.22, w, d, -0.7)
-
-    layout = rnd.random()
-    if layout < 0.3:
-        part(-0.5, 0.5, -0.5, 0.5)
-    elif layout < 0.7:  # side by side, the left part narrower
-        split = rnd.uniform(-0.15, 0.05)
-        part(-0.5, split - 0.04, -0.5, 0.5)
-        part(split + 0.04, 0.5, -0.5, 0.5)
-    else:  # stacked
-        split = rnd.uniform(-0.05, 0.15)
-        part(-0.5, 0.5, split + 0.04, 0.5)
-        part(-0.5, 0.5, -0.5, split - 0.04)
-    if rnd.random() < 0.35:  # a dot on top
-        bar(rnd.uniform(-0.2, 0.2), 0.47, w * 1.2, w * 1.4, 0.5)
-
-    parts = []
-    for u, v, du, dv, angle in strokes:
-        u, v, du, dv = u * size, v * size, du * size, dv * size
-        if along == 'z':
-            parts.append(box('stroke', (face_x, cy + v, cx + u), (thick, dv, du), mat, rot=(-angle, 0, 0) if angle else None))
-        else:
-            parts.append(box('stroke', (cx + u, cy + v, face_x), (du, dv, thick), mat, rot=(0, 0, angle) if angle else None))
-    return parts
-
 
 def build_yaowarat(pieces, wall, trim, concrete, glass, lit, dark, metal):
     import random

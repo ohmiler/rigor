@@ -12,10 +12,11 @@
 
 
 import os
+import random
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from kit import G, reset, material, prism, box, wheel_x, bevel, cut, finish, loft  # noqa: E402
+from kit import G, reset, material, prism, box, wheel_x, bevel, cut, finish, loft, join, export, glyph  # noqa: E402
 
 # ---------------------------------------------------------------- car
 # Collider (level.js): a 1.9 x 4.4 box to 0.95 m (bonnet and boot), and the
@@ -227,9 +228,105 @@ def build_tuktuk():
     finish('tuktuk', parts)
 
 
+# ---------------------------------------------------------------- the gate
+# Colliders (level.js): the two great pillars at x = +-4.6 and the outer
+# posts at +-6.0. A Chinatown gate across the end of the street: red
+# pillars, beams, a plaque of gold characters, brackets under tiers of green
+# tiled roof with upturned eaves. Its face is -z, toward the street.
+
+def build_gate():
+    reset()
+    red = material('Lacquer', '#9c1a14', 0.5)
+    gold = material('Gold', '#d4a531', 0.3, 0.8, 0.3)
+    tile = material('Tile', '#2f6b4a', 0.6)
+    stone = material('Stone', '#9a958a', 0.95)
+    plaque = material('Plaque', '#6b0f0b', 0.6)
+
+    def roof(name, x0, x1, profile, ridge_y):
+        parts = [prism(name, profile, 'x', x0, x1, tile), box('ridge', ((x0 + x1) / 2, ridge_y, 0), (x1 - x0 + 0.3, 0.16, 0.24), gold)]
+        eave_y = profile[0][1] + 0.18
+        reach = max(abs(p[0]) for p in profile)
+        for x, s in ((x0 - 0.1, -1), (x1 + 0.1, 1)):
+            for z in (-reach + 0.12, reach - 0.12):
+                parts.append(box('eave', (x, eave_y, z), (0.8, 0.12, 0.26), tile, rot=(0, 0, s * 0.38)))
+            parts.append(box('finial', (x + s * 0.05, ridge_y + 0.25, 0), (0.24, 0.45, 0.22), gold, rot=(0, 0, s * 0.3)))
+        return parts
+
+    parts = []
+    for s in (-1, 1):
+        parts += [
+            box('plinth', (s * 4.6, 0.3, 0), (1.1, 0.6, 1.1), stone),
+            box('pillar', (s * 4.6, 3.6, 0), (0.7, 6.6, 0.7), red),
+            box('collar', (s * 4.6, 0.75, 0), (0.8, 0.12, 0.8), gold),
+            box('plinth', (s * 6.0, 0.25, 0), (0.8, 0.5, 0.8), stone),
+            box('post', (s * 6.0, 2.4, 0), (0.5, 4.8, 0.5), red),
+            box('beam', (s * 5.3, 4.2, 0), (1.4, 0.3, 0.4), red),
+        ]
+        x0, x1 = sorted((s * 5.2, s * 6.8))
+        parts += roof('sideroof', x0, x1, [(-0.8, 4.8), (0.8, 4.8), (0.25, 5.4), (-0.25, 5.4)], 5.42)
+    parts += [
+        box('beam', (0, 5.4, 0), (9.9, 0.45, 0.55), red),
+        box('band', (0, 5.4, -0.29), (9.9, 0.1, 0.02), gold),
+        box('beam', (0, 6.75, 0), (9.9, 0.4, 0.5), red),
+        box('plaque', (0, 6.05, -0.32), (2.8, 1.05, 0.1), plaque),
+        box('plaqueframe', (0, 6.6, -0.38), (2.9, 0.06, 0.04), gold),
+        box('plaqueframe', (0, 5.5, -0.38), (2.9, 0.06, 0.04), gold),
+        box('plaqueframe', (-1.43, 6.05, -0.38), (0.06, 1.15, 0.04), gold),
+        box('plaqueframe', (1.43, 6.05, -0.38), (0.06, 1.15, 0.04), gold),
+    ]
+    rnd = random.Random(888)
+    for i in range(4):
+        parts += glyph(rnd, -0.99 + i * 0.66, 6.05, 0.56, -0.39, gold, along='x')
+    # Brackets under the main roof, red and gold in turn.
+    for i in range(17):
+        x = -4.8 + i * 0.6
+        parts.append(box('bracket', (x, 7.08, 0), (0.26, 0.26, 0.7), gold if i % 2 else red))
+    parts += roof('roof', -5.6, 5.6, [(-1.3, 7.2), (1.3, 7.2), (1.0, 7.5), (0.35, 8.3), (-0.35, 8.3), (-1.0, 7.5)], 8.38)
+    parts += [box('drum', (0, 8.6, 0), (2.6, 0.5, 0.6), red)]
+    parts += roof('crown', -2.0, 2.0, [(-0.9, 8.8), (0.9, 8.8), (0.6, 9.05), (0.22, 9.6), (-0.22, 9.6), (-0.6, 9.05)], 9.66)
+    finish('gate', parts)
+
+
+# ---------------------------------------------------------------- helicopter
+# Not a collider: it comes for you at the end. Three objects, so the game
+# can spin the rotors: "heli" (the airframe), "rotor" (centred on its hub,
+# which sits at (0, 2.25, 0) on the airframe) and "tailrotor" (hub at
+# (0.15, 2.0, -5.1), spinning about x). The nose is +z.
+
+def build_helicopter():
+    reset()
+    body_m = material('HeliBody', '#2c3035', 0.5, 0.3)
+    stripe = material('Stripe', '#e06a1b', 0.5)
+    glass = material('Glass', '#1c2530', 0.15, 0.4)
+    metal = material('Metal', '#3a3c40', 0.5, 0.6)
+    blade = material('Blade', '#151617', 0.6)
+    lamp = material('Lamp', '#ff3b30', 0.4, 0.0, 4.0)
+
+    body = [
+        loft('body', [(2.3, 0.1, 0.1, 0, 1.0), (2.0, 0.55, 0.6, 0, 1.05), (1.0, 0.85, 0.85, 0, 1.1), (-0.6, 0.8, 0.8, 0, 1.15), (-1.4, 0.4, 0.45, 0, 1.3), (-1.8, 0.12, 0.15, 0, 1.45)], body_m, axis='z', segments=16),
+        loft('canopy', [(2.25, 0.08, 0.08, 0, 1.25), (1.95, 0.45, 0.4, 0, 1.35), (1.25, 0.7, 0.55, 0, 1.5), (0.65, 0.6, 0.45, 0, 1.6), (0.55, 0.05, 0.05, 0, 1.6)], glass, axis='z', segments=16),
+        box('stripe', (0, 0.92, 0.2), (1.66, 0.16, 2.6), stripe),
+        box('boom', (0, 1.42, -3.4), (0.22, 0.26, 3.4), body_m),
+        box('fin', (0, 1.95, -5.0), (0.08, 1.1, 0.6), body_m, rot=(-0.3, 0, 0)),
+        box('tailplane', (0, 1.45, -4.6), (1.3, 0.06, 0.35), body_m),
+        box('mast', (0, 2.05, 0), (0.2, 0.3, 0.2), metal),
+        box('engine', (0, 1.85, -0.5), (0.8, 0.35, 1.4), body_m),
+        box('beacon', (0, 2.05, -1.1), (0.12, 0.08, 0.12), lamp),
+    ]
+    for s in (-1, 1):
+        body += [box('skid', (s * 0.85, 0.05, 0.1), (0.08, 0.08, 3.2), metal)]
+        body += [box('strut', (s * 0.7, 0.35, z), (0.06, 0.7, 0.06), metal, rot=(0, 0, s * 0.35)) for z in (-0.6, 0.9)]
+    heli = join('heli', body, smooth=None)
+    rotor = join('rotor', [box('blade', (0, 0, 0), (9.0, 0.05, 0.3), blade), box('blade', (0, 0, 0), (0.3, 0.05, 9.0), blade), box('hub', (0, 0, 0), (0.4, 0.15, 0.4), metal)], smooth=False)
+    tail = join('tailrotor', [box('blade', (0, 0, 0), (0.05, 1.4, 0.16), blade), box('blade', (0, 0, 0), (0.05, 0.16, 1.4), blade)], smooth=False)
+    export('helicopter', [heli, rotor, tail])
+
+
 build_car()
 build_dumpster()
 build_barrier()
 build_stall()
 build_tables()
 build_tuktuk()
+build_gate()
+build_helicopter()

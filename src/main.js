@@ -14,6 +14,8 @@ import { NavGrid } from './nav.js';
 import { Post } from './post.js';
 import { Director } from './director.js';
 import { CarAlarms } from './alarms.js';
+import { Finale, FINALE } from './finale.js';
+import { HeliView } from './heli.js';
 import { dressProps, animateNeon } from './props.js';
 import { loadCharacter } from './characters.js';
 import { Recorder, Playback, mulberry32, newSeed, round, fingerprint } from './replay.js';
@@ -384,6 +386,7 @@ function restart(seed = urlSeed ?? newSeed()) {
     spawnLevelZombies();
     director = new Director(directorStreet);
     alarms.reset();
+    finale.reset();
   });
   setSkeleton(params.showSkeleton);
   kills = 0;
@@ -471,6 +474,7 @@ function runCommand([name, a, b, c]) {
   else if (name === 'flashlight') player.toggleFlashlight();
   else if (name === 'shove') player.startShove();
   else if (name === 'wave') spawnWave();
+  else if (name === 'radio') finale.call(player);
 }
 
 // One fixed simulation step.
@@ -565,6 +569,15 @@ const directorWorld = {
   },
 };
 let hordeBanner = null; // the warning on screen: { dir, t: seconds left }
+
+// The end of the street: radio from under the gate, hold out, get out.
+const finale = new Finale(level.goal);
+finale.onCall = () => {
+  sound.radio();
+  director.startFinale();
+};
+const heli = new HeliView(scene);
+const _hover = new THREE.Vector3();
 
 // Car alarms: shoot an armed car or climb on it and the whole street comes.
 const alarms = new CarAlarms(scene, level.props.car);
@@ -679,7 +692,9 @@ function updateWorld(dt, input) {
   if (player.state === 'normal' || player.state === 'grabbed') runTime += dt;
 
   // Made it to the extraction point alive.
-  if (!escaped && player.state === 'normal' && player.pos.distanceTo(level.goal.pos) < level.goal.radius) {
+  // Out on the helicopter (finale.js: the radio, the holdout, the landing).
+  const rescued = finale.update(dt, player);
+  if (!escaped && rescued) {
     escaped = true;
     player.state = 'escaped'; // can't be grabbed any more
     const m = Math.floor(runTime / 60);
@@ -810,6 +825,7 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'KeyQ') queue(['swap']);
   if (e.code === 'KeyG') queue(lastAim ? ['throw', lastAim.x, lastAim.y, lastAim.z] : ['throw']);
   if (e.code === 'KeyF') queue(['flashlight']);
+  if (e.code === 'KeyE' && finale.canCall(player)) queue(['radio']);
   if (DEV) {
     if (e.code === 'KeyN') queue(['wave']);
     if (e.code === 'KeyT') params.slowMo = !params.slowMo;
@@ -901,10 +917,16 @@ const camPos = new THREE.Vector3();
 let camZoom = 1;
 function updateCamera(dt, snap = false) {
   camGoal.copy(player.state === 'dead' ? player.deathPos : player.pos).add(new THREE.Vector3(0, 1, 0));
-  const k = snap ? 1 : 1 - Math.exp(-8 * dt);
+  // When the helicopter comes, look half way to where it will hang, and pull
+  // back (below), so it's in the shot with you (if you're near enough).
+  const heliHere = finale.phase === 'arriving' || finale.phase === 'landed';
+  if (heliHere && player.state !== 'dead' && player.pos.distanceTo(level.goal.pos) < 20) {
+    camGoal.lerp(_hover.set(level.goal.pos.x, FINALE.hover.y, level.goal.pos.z + FINALE.hover.ahead), 0.5);
+  }
+  const k = snap ? 1 : 1 - Math.exp(-(heliHere ? 3 : 8) * dt);
   camTarget.lerp(camGoal, k);
   // Push in close while grabbed or dead.
-  const zoomGoal = { grabbed: 0.6, dead: 0.5 }[player.state] ?? 1;
+  const zoomGoal = { grabbed: 0.6, dead: 0.5 }[player.state] ?? (heliHere ? 1.45 : 1);
   camZoom += (zoomGoal - camZoom) * (1 - Math.exp(-4 * dt));
   const dist = camDist * camZoom;
   camPos.set(camTarget.x, camTarget.y + dist * 0.82, camTarget.z - dist * 0.57);
@@ -1056,12 +1078,25 @@ function updateUI(real) {
   }
 
   const toGoal = Math.max(player.pos.distanceTo(level.goal.pos) - level.goal.radius, 0);
-  ui.objective.textContent = escaped ? 'EXTRACTED' : `EXTRACTION ▲ ${Math.round(toGoal)} m`;
+  const left = Math.ceil(finale.timeLeft);
+  ui.objective.textContent = escaped
+    ? 'EXTRACTED'
+    : {
+        waiting: finale.canCall(player) ? 'PRESS E · RADIO FOR THE HELICOPTER' : `EXTRACTION ▲ ${Math.round(toGoal)} m`,
+        holdout: `HOLD OUT · HELICOPTER IN ${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`,
+        arriving: 'THE HELICOPTER IS COMING IN',
+        landed: `GET TO THE HELICOPTER ▲ ${Math.round(toGoal)} m`,
+        rescued: 'EXTRACTED',
+      }[finale.phase];
+  ui.objective.classList.toggle('finale', finale.phase !== 'waiting');
 
-  // The extraction ring breathes so it reads as "go here".
+  // The extraction ring breathes so it reads as "go here"; while you hold
+  // out it's just a mark on the road, and it calls you again when the
+  // helicopter's down.
   const pulse = 0.5 + 0.5 * Math.sin(performance.now() / 300);
-  level.goalParts.goalRing.material.opacity = 0.5 + pulse * 0.5;
-  level.goalParts.beam.material.opacity = 0.12 + pulse * 0.1;
+  const calling = finale.phase === 'waiting' || finale.phase === 'landed';
+  level.goalParts.goalRing.material.opacity = calling ? 0.5 + pulse * 0.5 : 0.25;
+  level.goalParts.beam.material.opacity = calling ? 0.12 + pulse * 0.1 : 0;
 }
 
 // Zombie voices and other sounds that follow from what's happening rather
@@ -1173,6 +1208,7 @@ function frame(timestamp) {
   effects.update(dt);
   gore.update(dt);
   alarms.animate(real, (car) => sound.carAlarm(car, alarms.lastBeat));
+  sound.rotor(heli.update(real, finale, level.goal));
   animateNeon(level, timestamp / 1000, params.night);
 
   updateCamera(real);
@@ -1205,5 +1241,5 @@ if (import.meta.env.DEV) {
       gore.update(STEP);
     }
   };
-  /** @type {any} */ (window).__rigor = { renderer, scene, player, grapple, gore, params, zparams, level, nav, post, hurt: () => (hurtFlash = 1), watchReplay, get recorder() { return recorder; }, get playback() { return playback; }, worldFingerprint, pickups, sound, restart, startGame, advance, addZombie, get zombies() { return zombies; }, get director() { return director; }, alarms };
+  /** @type {any} */ (window).__rigor = { renderer, scene, player, grapple, gore, params, zparams, level, nav, post, hurt: () => (hurtFlash = 1), watchReplay, get recorder() { return recorder; }, get playback() { return playback; }, worldFingerprint, pickups, sound, restart, startGame, advance, addZombie, get zombies() { return zombies; }, get director() { return director; }, alarms, finale };
 }

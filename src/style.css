@@ -156,6 +156,12 @@ canvas {
   pointer-events: none;
 }
 
+/* The finale: the clock, then the way to the helicopter. */
+#objective.finale {
+  font-size: 15px;
+  color: #ffd27a;
+}
+
 /* A horde on its way: which way to face. */
 #horde {
   position: fixed;

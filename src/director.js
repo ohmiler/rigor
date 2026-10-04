@@ -46,6 +46,10 @@ export const DIRECTOR = {
   hordeSize: [20, 40], // the street's start to its end (and a few either way)
   hordeAhead: 0.6, // from up the street; the rest come from behind
   hordeRunners: 0.85,
+  // The finale (finale.js): no peaks, no breathers, until the helicopter.
+  finaleMobEvery: [4, 7],
+  finaleHordeFirst: 8,
+  finaleHordeEvery: [18, 26],
   // Intensity
   hurt: 1 / 60, // per point of health lost
   held: 0.25, // per second in a zombie's grip
@@ -89,6 +93,15 @@ export class Director {
     // The horde on its way: { dir: 1 ahead | -1 behind | 0 both, warn: seconds left, queue }.
     this.horde = null;
     this.hordes = 0;
+    this.finale = false;
+  }
+
+  /** The radio's been made: everything it has, from here to the helicopter. */
+  startFinale() {
+    this.finale = true;
+    if (this.phase !== 'build') this._enter('build');
+    this.hordeTimer = Math.min(this.hordeTimer, this.t.finaleHordeFirst);
+    this.mobTimer = Math.min(this.mobTimer, 2);
   }
 
   /**
@@ -98,9 +111,19 @@ export class Director {
    */
   panic(ctx, warn = 2) {
     if (this.horde) return;
-    this.horde = { dir: 0, warn, queue: [] };
+    this.horde = { dir: this._way(0, ctx.player), warn, queue: [] };
     if (this.phase !== 'build') this._enter('build');
-    ctx.onHorde?.(0);
+    ctx.onHorde?.(this.horde.dir);
+  }
+
+  // Which way a horde can really come (`dir` 1 ahead, -1 behind, 0 both):
+  // at an end of the street there's no room past the view, so it comes the
+  // other way, and the warning says so.
+  _way(dir, player) {
+    const t = this.t;
+    const can = (d) => (d > 0 ? player.pos.z + t.ahead[0] <= this.street.maxZ : player.pos.z - t.behind[0] >= this.street.minZ);
+    if (dir === 0) return can(1) && can(-1) ? 0 : can(1) ? 1 : -1;
+    return can(dir) ? dir : -dir;
   }
 
   /** Seconds until a horde arrives (0 when none is coming) and which way. */
@@ -170,17 +193,19 @@ export class Director {
     if (this.phase === 'build') {
       // A horde on its way is the build-up now: all of it lands before the peak.
       if (this.horde) return;
-      if (this.intensity >= t.peak || this.phaseTime > t.buildMax) return this._enter('peak');
+      if (!this.finale && (this.intensity >= t.peak || this.phaseTime > t.buildMax)) return this._enter('peak');
       this.hordeTimer -= dt;
       if (this.hordeTimer <= 0) {
-        this.hordeTimer = roll(t.hordeEvery);
-        this.horde = { dir: Math.random() < t.hordeAhead ? 1 : -1, warn: t.hordeWarn, queue: [] };
+        this.hordeTimer = roll(this.finale ? t.finaleHordeEvery : t.hordeEvery);
+        // In the finale they come from both ends as often as not.
+        const dir = this.finale && Math.random() < 0.5 ? 0 : Math.random() < t.hordeAhead ? 1 : -1;
+        this.horde = { dir: this._way(dir, ctx.player), warn: t.hordeWarn, queue: [] };
         ctx.onHorde?.(this.horde.dir);
         return;
       }
       this.mobTimer -= dt * (this.quietTime > t.quietAfter ? 2 : 1);
       if (this.mobTimer <= 0) {
-        this.mobTimer = roll(t.mobEvery);
+        this.mobTimer = roll(this.finale ? t.finaleMobEvery : t.mobEvery);
         this._sendMob(ctx);
       }
     } else if (this.phase === 'peak') {

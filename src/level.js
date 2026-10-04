@@ -44,7 +44,7 @@ export function buildStreet(scene) {
     zombieSpawns: [],
     pickupSpots: [], // { type: 'ammo' | 'medkit', pos }
     lamps: [],
-    props: { car: [], dumpster: [], barrier: [], stall: [], tables: [], tuktuk: [] }, // where the Blender models go (props.js)
+    props: { car: [], dumpster: [], barrier: [], stall: [], tables: [], tuktuk: [], gate: [] }, // where the Blender models go (props.js)
     buildings: [], // street fronts to dress (props.js)
     goalParts: null,
   };
@@ -201,6 +201,16 @@ export function buildStreet(scene) {
     level.props.tuktuk.push({ x, z, yaw, color, standIns: [mesh] });
     collider(x, z, 0.65, 1.3, yaw, { top: 1.75, climb: true });
   };
+  // The Chinatown gate across the end of the street, behind the extraction
+  // point: where you hold out for the helicopter. Its pillars are solid.
+  const GATE_Z = STREET_LENGTH - 1.2;
+  const gateBoxes = [];
+  for (const [x, w, h] of [[-4.6, 0.7, 6.6], [4.6, 0.7, 6.6], [-6.0, 0.5, 4.8], [6.0, 0.5, 4.8]]) {
+    gateBoxes.push(add(block(MATS.concrete, w, h, w, x, h / 2, GATE_Z), { solid: true }));
+    collider(x, GATE_Z, w / 2 + 0.05, w / 2 + 0.05, 0, { top: h });
+  }
+  level.props.gate.push({ x: 0, z: GATE_Z, yaw: 0, standIns: gateBoxes });
+
   tuktuk(1.9, 27.5, 0.25, '#1f6fb5');
   tuktuk(2.4, 70, 3.0, '#2f8a3a');
   tuktuk(-2.6, 101, -0.15, '#d94a1f');

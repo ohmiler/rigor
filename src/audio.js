@@ -487,6 +487,50 @@ export class Sound {
     }
   }
 
+  // The radio call for the helicopter: static, two beeps, static.
+  radio() {
+    const o = this._out(null, 0, 0.5);
+    if (!o) return;
+    this._noise(o, { dur: 0.35, type: 'bandpass', freq: 1800, q: 0.7, gain: 0.5 });
+    this._tone(o, { at: 0.42, dur: 0.12, type: 'square', freq: 1200, gain: 0.22 });
+    this._tone(o, { at: 0.62, dur: 0.12, type: 'square', freq: 1200, gain: 0.22 });
+    this._noise(o, { at: 0.85, dur: 0.6, type: 'bandpass', freq: 2200, q: 0.6, gain: 0.35 });
+  }
+
+  // The helicopter: the beat of its blades, louder as it comes, from `pos`
+  // (null: gone). Called every frame; one sound kept running.
+  rotor(pos) {
+    if (!this.ctx) return;
+    if (!this.rotorOut) {
+      const ctx = this.ctx;
+      const src = ctx.createBufferSource();
+      src.buffer = this.noiseBuffer;
+      src.loop = true;
+      const f = ctx.createBiquadFilter();
+      f.type = 'lowpass';
+      f.frequency.value = 320;
+      const chop = ctx.createGain();
+      chop.gain.value = 0.5;
+      const lfo = ctx.createOscillator();
+      lfo.type = 'square';
+      lfo.frequency.value = 11; // whup-whup-whup
+      const depth = ctx.createGain();
+      depth.gain.value = 0.5;
+      lfo.connect(depth).connect(chop.gain);
+      this.rotorOut = ctx.createGain();
+      this.rotorOut.gain.value = 0;
+      src.connect(f).connect(chop).connect(this.rotorOut).connect(this.master);
+      src.start();
+      lfo.start();
+    }
+    let gain = 0;
+    if (pos && this.listener) {
+      const d = Math.hypot(pos.x - this.listener.x, pos.z - this.listener.z);
+      gain = 1.1 * Math.max(1 - d / 150, 0) ** 2;
+    }
+    this.rotorOut.gain.setTargetAtTime(gain, this.ctx.currentTime, 0.3);
+  }
+
   died() {
     const o = this._out(null, 0, 0.5);
     if (!o) return;
